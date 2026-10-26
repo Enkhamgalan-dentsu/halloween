@@ -1,0 +1,56 @@
+# Netlify config — mirrors vercel.json. The /F and /B marker paths are printed on the
+# costume and must keep working forever (see AGENTS.md).
+
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+[build.environment]
+  # npm test needs Node >= 22.6 (--experimental-strip-types)
+  NODE_VERSION = "22"
+
+# Marker paths → the SPA. status 200 = rewrite (URL stays /F or /B so config.ts sees it).
+[[redirects]]
+  from = "/F"
+  to = "/index.html"
+  status = 200
+
+[[redirects]]
+  from = "/B"
+  to = "/index.html"
+  status = 200
+
+[[redirects]]
+  from = "/f"
+  to = "/index.html"
+  status = 200
+
+[[redirects]]
+  from = "/b"
+  to = "/index.html"
+  status = 200
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    Permissions-Policy = "camera=(self)"
+
+[[headers]]
+  for = "/assets/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
+[[headers]]
+  for = "/mediapipe/*"
+  [headers.values]
+    Cache-Control = "public, max-age=86400, stale-while-revalidate=604800"
+
+[[headers]]
+  for = "/models/*"
+  [headers.values]
+    Cache-Control = "public, max-age=86400, stale-while-revalidate=604800"
+
+[[headers]]
+  for = "/suits/*"
+  [headers.values]
+    Cache-Control = "public, max-age=86400, stale-while-revalidate=604800"

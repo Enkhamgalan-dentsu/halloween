@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Pose lab</title>
+    <style>
+      html, body { margin: 0; height: 100%; background: #15151c; color: #eee; font: 14px system-ui, sans-serif; overflow: hidden; }
+      #stage, #gl { position: fixed; inset: 0; width: 100%; height: 100%; }
+      #debug-canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+      #ui { position: fixed; left: 8px; top: 8px; z-index: 9; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+      select, label { font: inherit; }
+      #info { opacity: 0.8; }
+    </style>
+  </head>
+  <body>
+    <div id="stage"></div>
+    <canvas id="gl"></canvas>
+    <div id="ui">
+      <select id="pose"></select>
+      <label>float <select id="float"><option>0</option><option selected>1</option><option>2</option></select></label>
+      <label><input id="sway" type="checkbox" checked /> sway</label>
+      <label><input id="bones" type="checkbox" checked /> bones</label>
+      <span id="info"></span>
+    </div>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

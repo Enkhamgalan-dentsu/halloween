@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Build suit</title>
+    <style>
+      body { font: 14px/1.4 system-ui, sans-serif; margin: 24px; background: #111; color: #eee; }
+      button { font: inherit; padding: 8px 16px; }
+      pre { background: #000; padding: 12px; white-space: pre-wrap; }
+    </style>
+  </head>
+  <body>
+    <h1>Build suit</h1>
+    <p>Builds <code>public/suits/mermaid.glb</code> from <code>assets/creepy_mermaid.glb</code>. Run on the dev server (<code>npm run dev</code>), then save the download into <code>public/suits/</code>.</p>
+    <button id="build" type="button">Build</button>
+    <pre id="log"></pre>
+    <script type="module">
+      import { buildSuit } from './build-suit.js';
+      const logEl = document.getElementById('log');
+      const log = (m) => { logEl.textContent += m + '\n'; };
+      window.runBuild = async () => {
+        const { glb, report } = await buildSuit(log);
+        log(JSON.stringify(report, null, 2));
+        return { glb, report };
+      };
+      document.getElementById('build').onclick = async () => {
+        const { glb } = await window.runBuild();
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(new Blob([glb], { type: 'model/gltf-binary' }));
+        a.download = 'mermaid.glb';
+        a.click();
+      };
+    </script>
+  </body>
+</html>

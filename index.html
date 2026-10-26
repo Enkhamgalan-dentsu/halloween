@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+    <meta name="theme-color" content="#0b0b0f" />
+    <title>Haunted Suit AR</title>
+  </head>
+  <body>
+    <div id="stage">
+      <video id="camera" playsinline muted autoplay></video>
+      <canvas id="overlay"></canvas>
+    </div>
+
+    <div id="pill" role="status" aria-live="polite" hidden></div>
+
+    <div id="start-screen" class="screen">
+      <h1>Haunted Suit</h1>
+      <p class="hint">Point your camera at the person wearing the marker.</p>
+      <button id="start-btn" type="button">Tap to summon</button>
+      <p id="status" role="status" aria-live="polite"></p>
+      <p class="credit">
+        “<a href="https://sketchfab.com/3d-models/creepy-mermaid-d30d4818353d4957ad23ff635a143abe" target="_blank" rel="noopener">Creepy Mermaid</a>”
+        by <a href="https://sketchfab.com/seenoise" target="_blank" rel="noopener">seenoise</a>,
+        <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener">CC BY 4.0</a> — rigged and optimized for this app.
+      </p>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
