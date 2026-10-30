@@ -22,8 +22,12 @@
  *   ?fin=hang|trail  fin hangs below the tail (default) or trails along the floor behind
  *   ?zoom=0.5        try the wide (0.5×) back camera; ?zoom=1 = normal lens
  *   ?float=1         ghost-like easing: 0 = locked to tracking, 1 = default, 2 = extra floaty
+ *   ?suit=mermaid|bonnie  force a costume (default: random 50/50 on every load)
+ *   ?lock=0          don't require the QR marker: costume goes on the most central person
  */
 import { DEFAULT_SMOOTHING } from './tracking/smoothing.ts';
+import { SUIT_IDS } from './rig/profiles.ts';
+import type { SuitId } from './rig/profiles.ts';
 import type { SmoothingParams } from './tracking/smoothing.ts';
 
 export type CameraFacing = 'environment' | 'user';
@@ -44,6 +48,10 @@ export interface AppConfig {
   fin: FinMode;
   zoom: number;
   float: number;
+  /** null = pick at random on every load. */
+  suit: SuitId | null;
+  /** Costume only on the person wearing the QR marker (default). */
+  lock: boolean;
 }
 
 export function readConfig(
@@ -69,6 +77,8 @@ export function readConfig(
     fin: q.get('fin') === 'trail' ? 'trail' : 'hang',
     zoom: clamp(positiveNumber(q.get('zoom'), 0.5), 0.5, 1),
     float: clamp(positiveNumber(q.get('float'), 1), 0, 3),
+    suit: (SUIT_IDS as readonly string[]).includes(q.get('suit') ?? '') ? (q.get('suit') as SuitId) : null,
+    lock: q.get('lock') !== '0',
   };
 }
 

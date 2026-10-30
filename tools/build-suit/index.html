@@ -11,17 +11,33 @@
   </head>
   <body>
     <h1>Build suit</h1>
-    <p>Builds <code>public/suits/mermaid.glb</code> from <code>assets/creepy_mermaid.glb</code>. Run on the dev server (<code>npm run dev</code>), then save the download into <code>public/suits/</code>.</p>
-    <button id="build" type="button">Build</button>
+    <p>Builds <code>public/suits/mermaid.glb</code> (rigs the static mermaid sculpt) and <code>public/suits/bonnie.glb</code> (optimizes the already-rigged Bonnie). Run on the dev server (<code>npm run dev</code>), then save the download into <code>public/suits/</code>.</p>
+    <button id="build" type="button">Build mermaid.glb</button>
+    <button id="build-bonnie" type="button">Build bonnie.glb</button>
     <pre id="log"></pre>
     <script type="module">
-      import { buildSuit } from './build-suit.js';
+      import { buildSuit, buildRigged } from './build-suit.js';
       const logEl = document.getElementById('log');
       const log = (m) => { logEl.textContent += m + '\n'; };
       window.runBuild = async () => {
         const { glb, report } = await buildSuit(log);
         log(JSON.stringify(report, null, 2));
         return { glb, report };
+      };
+      const download = (glb, name) => {
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(new Blob([glb], { type: 'model/gltf-binary' }));
+        a.download = name;
+        a.click();
+      };
+      window.runRigged = async (name) => {
+        const res = await buildRigged(name, log);
+        log(JSON.stringify(res.report, null, 2));
+        return res;
+      };
+      document.getElementById('build-bonnie').onclick = async () => {
+        const { glb, output } = await window.runRigged('bonnie');
+        download(glb, output);
       };
       document.getElementById('build').onclick = async () => {
         const { glb } = await window.runBuild();

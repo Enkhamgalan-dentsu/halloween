@@ -1,6 +1,7 @@
 # Haunted Suit — WebAR Halloween costume
 
-Scan the QR on the wearer's chest or back → see them in a rigged 3D Halloween suit.
+Scan the QR on the wearer's chest or back → see them as a creepy mermaid or a melted
+chocolate animatronic (random each time), following their movement.
 
 ```bash
 npm run setup   # install dependencies + fetch MediaPipe wasm/models

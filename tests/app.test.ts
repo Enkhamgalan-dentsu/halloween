@@ -38,6 +38,13 @@ test('config: suit tuning params with sane defaults and clamping', () => {
   assert.equal(c.fov, 100);
 });
 
+test('config: ?suit forces a costume, anything else means random', () => {
+  assert.equal(readConfig('/F', '?suit=bonnie').suit, 'bonnie');
+  assert.equal(readConfig('/F', '?suit=mermaid').suit, 'mermaid');
+  assert.equal(readConfig('/F', '?suit=dracula').suit, null);
+  assert.equal(readConfig('/F', '').suit, null);
+});
+
 test('coverMapping: landscape video on a portrait phone is cropped left/right', () => {
   const m = coverMapping(1280, 720, 390, 844);
   const c = videoToView(0.5, 0.5, m);

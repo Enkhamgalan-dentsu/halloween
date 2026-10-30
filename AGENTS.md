@@ -11,9 +11,18 @@ tracks the wearer's body, and renders a **rigged 3D Halloween suit** over them t
 follows their movement in real time.
 
 Fixed context: **indoor** party, **full‑body** suit, production URL **https://boo.angaahai.com**
-(Netlify, subdomain of the owner's domain). The suit is the **Creepy Mermaid**
-(`public/suits/mermaid.glb`, CC BY 4.0 — keep the credit on the start screen). It has a
-**tail instead of legs**: the wearer's legs drive the tail chain. Details: `docs/SUIT.md`.
+(Netlify, subdomain of the owner's domain). There are **two costumes**, picked at random
+(50/50) on every load, `?suit=mermaid|bonnie` to force one:
+- **Creepy Mermaid** (`public/suits/mermaid.glb`, seenoise, CC BY 4.0) — rigged by us,
+  identity rest rotations, **tail instead of legs** (the wearer's legs drive the tail).
+- **Reanimated Melted Chocolate Bonnie** (`public/suits/bonnie.glb`, OrangeSauceu,
+  CC BY 4.0) — came rigged (FBX T-pose, non-identity rest rotations), legs drive legs.
+Both credits are shown (loading screen + small AR corner). Details: `docs/SUIT.md`.
+The costume appears **only on the person wearing the printed QR marker** (wearer lock:
+marker → then body continuity + clothing fingerprint; `?lock=0` disables). Markers to print:
+`assets/markers/` (A3 recommended).
+The app starts by itself (no tap): scary loading screen (`src/ui/loader.ts`, image
+`public/loading.jpg`) while camera + tracker + suit load in parallel.
 
 Hard deadline: **Halloween, 2026‑10‑31**. Code freeze 2026‑10‑30. Prefer simple and
 robust over clever. A stable, slightly‑less‑fancy suit beats a jittery fancy one.
@@ -62,17 +71,23 @@ src/
   tracking/mediapipe-pose.ts  MediaPipe PoseLandmarker (download progress, GPU→CPU fallback)
   tracking/filters.ts One Euro filter
   tracking/smoothing.ts  PoseSmoother: One Euro on all landmarks (?mc= ?beta=)
-  tracking/select.ts  WearerSelector: which detected person is the wearer
+  tracking/select.ts  torsoBox() + WearerSelector (only used with ?lock=0)
+  tracking/wearer-lock.ts  WearerLock: marker-locked wearer, continuity, re-identification
+  tracking/appearance.ts   clothing colour fingerprint (hue/grey histograms, top/bottom)
+  markers/finder.ts   QR finder-pattern detector (no decode; works on iOS)
+  markers/qr.ts       MarkerScanner: torso crops, marker search, fingerprint, Android decode
+  markers/marker-grids.ts  module grids of the printed markers (tests render them)
   debug/skeleton.ts   ?debug 2D skeleton overlay
   util/fetch-bytes.ts fetch with progress
   util/rate.ts        RateCounter (Hz), Ema
-  rig/bones.ts        bone keys → suit bone names, parents, segments (+ tail chain)
-  rig/rest-pose.ts    joint names + rest-pose table (tests check it against the GLB)
+  rig/bones.ts        solver bone keys + hierarchy (torso, arms, legs, tail)
+  rig/profiles.ts     per-suit profile: node names, anchor, fit, credit; analyzeRig()
   rig/landmarks.ts    the ONE MediaPipe → three.js axis conversion, L/R swap, trust()
-  rig/solver.ts       landmarks → bone rotations (torso, head, arms, legs → tail, fin)
+  rig/solver.ts       landmarks → per-bone rotation DELTAS from rest (any rig)
   rig/placement.ts    depth / scale / position of the suit root
   rig/facing.ts       front/back estimate (marker side + face visibility)
-  rig/suit.ts         GLB loading, bones, apply pose, show/hide
+  rig/suit.ts         GLB loading; applies deltas through the real hierarchy + rest rotations
+  ui/loader.ts        auto-start scary loading screen (static, glitches, whispers, progress)
   rig/follow.ts       ghost-like easing: spring root, per-bone lag (tail trails), hover bob
   markers/qr.ts       in-frame marker detection                     (Phase 4)
 public/               served as-is: models/*.task, mediapipe/wasm/, suits/mermaid.glb
@@ -135,7 +150,8 @@ Use the **lite** pose model by default; `?model=full` exists for comparison only
 
 ## Platform constraints
 
-- Camera needs **HTTPS** and, on iOS, a **user gesture** → keep the "Tap to summon" button.
+- Camera needs **HTTPS**. It is requested on page load (no tap); browsers that insist on a
+  gesture (some in-app QR browsers) get an "Allow camera" button in the loader.
 - `<video playsinline muted autoplay>` — all three are required on iOS Safari.
 - QR scanners inside social apps (in‑app browsers) may block the camera; show a clear
   "open in Safari/Chrome" message rather than failing silently.
@@ -175,5 +191,9 @@ Use the **lite** pose model by default; `?model=full` exists for comparison only
 - **Don't** add a framework (React etc.), a backend, or a CDN dependency.
 - **Don't** commit `node_modules/`, `public/mediapipe/wasm/`, `public/models/*.task`, or raw recordings.
 - **Don't** change the marker URL format without updating the printed markers.
-- **Don't** hand-edit `public/suits/mermaid.glb`; change `tools/build-suit/` and rebuild.
-- **Don't** remove the CC BY credit for the mermaid model.
+- **Don't** hand-edit `public/suits/*.glb`; change `tools/build-suit/` and rebuild.
+- **Don't** remove the CC BY credits for the models (`profile.credit`, shown by main.ts).
+- **Don't** assume identity rest rotations anywhere: the solver outputs deltas from rest and
+  only `Suit.applyDeltas` turns them into local bone rotations.
+- Adding a costume = a GLB in `public/suits/`, a profile in `rig/profiles.ts` (node names,
+  anchor, shoulders, legs, fit, credit), and a test that its nodes exist.

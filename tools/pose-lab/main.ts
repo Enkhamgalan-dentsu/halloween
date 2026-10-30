@@ -8,7 +8,8 @@ import * as THREE from 'three';
 import { Suit } from '../../src/rig/suit.ts';
 import { PoseSolver } from '../../src/rig/solver.ts';
 import { RootPlacer } from '../../src/rig/placement.ts';
-import { SUIT_URL } from '../../src/rig/bones.ts';
+import { PROFILES } from '../../src/rig/profiles.ts';
+import type { SuitId } from '../../src/rig/profiles.ts';
 import { SkeletonOverlay } from '../../src/debug/skeleton.ts';
 import { makeFrame } from '../../tests/synthetic.ts';
 import type { SyntheticOptions } from '../../tests/synthetic.ts';
@@ -97,12 +98,16 @@ scene.add(key);
 const camera = new THREE.PerspectiveCamera(FOV, 1, 0.05, 50);
 const skeleton = new SkeletonOverlay(stage);
 
-const suit = await Suit.load(SUIT_URL);
-scene.add(suit.root);
-const helper = suit.makeHelper();
-scene.add(helper);
-let solver = new PoseSolver(suit.rest);
-let placer = new RootPlacer(suit.rest);
+const suitSel = document.getElementById('suit') as HTMLSelectElement;
+const suits = {
+  mermaid: await Suit.load(PROFILES.mermaid),
+  bonnie: await Suit.load(PROFILES.bonnie),
+} satisfies Record<SuitId, Suit>;
+const helpers = { mermaid: suits.mermaid.makeHelper(), bonnie: suits.bonnie.makeHelper() };
+for (const id of ['mermaid', 'bonnie'] as const) scene.add(suits[id].root, helpers[id]);
+let suit: Suit = suits.mermaid;
+let solver = new PoseSolver(suit.rig.restDir);
+let placer = new RootPlacer(suit.rig.measure);
 let follower = new SuitFollower({ float: Number(floatSel.value) });
 let lastTime = -1;
 
@@ -115,9 +120,10 @@ const resize = () => {
 window.addEventListener('resize', resize);
 resize();
 
-select.onchange = sway.onchange = floatSel.onchange = () => {
-  solver = new PoseSolver(suit.rest, sway.checked ? {} : { swayAmplitude: 0 });
-  placer = new RootPlacer(suit.rest);
+select.onchange = sway.onchange = floatSel.onchange = suitSel.onchange = () => {
+  suit = suits[suitSel.value as SuitId];
+  solver = new PoseSolver(suit.rig.restDir, sway.checked ? {} : { swayAmplitude: 0 });
+  placer = new RootPlacer(suit.rig.measure);
   follower = new SuitFollower({ float: Number(floatSel.value) });
 };
 
@@ -129,13 +135,15 @@ renderer.setAnimationLoop((time: number) => {
   frame.timestampMs = time;
   const pose = solver.solve(frame, scenario.facing ?? 'front', time);
   placer.update(frame, mapping, view.width, view.height, FOV);
-  follower.setTarget(pose.local, placer.position, placer.scale);
+  follower.setTarget(pose.delta, placer.position, placer.scale);
   follower.update(lastTime < 0 ? 0 : (time - lastTime) / 1000);
   lastTime = time;
-  suit.applyLocal(follower.local);
+  suit.applyDeltas(follower.rotations);
   suit.place(follower.displayPosition, follower.scale);
-  suit.root.visible = true;
-  helper.visible = bonesBox.checked;
+  for (const id of ['mermaid', 'bonnie'] as const) {
+    suits[id].root.visible = suits[id] === suit;
+    helpers[id].visible = suits[id] === suit && bonesBox.checked;
+  }
   skeleton.draw(frame, [], mapping);
   renderer.render(scene, camera);
   info.textContent = `depth ${placer.depth.toFixed(2)} m · scale ${placer.scale.toFixed(2)} · conf ${pose.confidence.toFixed(2)}${pose.swapped ? ' · L/R swapped' : ''}`;

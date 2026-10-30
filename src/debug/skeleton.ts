@@ -53,11 +53,25 @@ export class SkeletonOverlay {
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   }
 
-  draw(wearer: PoseFrame | null, others: readonly PoseFrame[], mapping: CoverMapping): void {
+  draw(
+    wearer: PoseFrame | null,
+    others: readonly PoseFrame[],
+    mapping: CoverMapping,
+    markers: ReadonlyArray<{ x: number; y: number; ageMs: number }> = [],
+  ): void {
     const { ctx } = this;
     ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
     for (const other of others) this.drawPose(other.image, mapping, COLOR_OTHER, 2);
     if (wearer) this.drawPose(wearer.image, mapping, null, 4);
+    // Recently seen QR markers: a fading square.
+    for (const m of markers) {
+      const p = videoToView(m.x, m.y, mapping);
+      ctx.globalAlpha = Math.max(0, 1 - m.ageMs / 1500);
+      ctx.strokeStyle = '#ffe14d';
+      ctx.lineWidth = 3;
+      ctx.strokeRect(p.x - 18, p.y - 18, 36, 36);
+    }
+    ctx.globalAlpha = 1;
   }
 
   private drawPose(points: readonly Landmark[], m: CoverMapping, flat: string | null, width: number): void {

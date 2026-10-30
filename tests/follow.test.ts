@@ -20,7 +20,7 @@ test('first target snaps (no gliding in from the origin)', () => {
   f.update(1 / 60);
   assert.ok(f.position.distanceTo(new Vector3(1, 2, -3)) < 1e-9);
   assert.equal(f.scale, 0.8);
-  assert.ok(f.local.head.angleTo(pose(0.5).head) < 1e-6);
+  assert.ok(f.rotations.head.angleTo(pose(0.5).head) < 1e-6);
 });
 
 test('fast move: lags a little, then catches up smoothly without overshoot', () => {
@@ -58,8 +58,8 @@ test('the tail trails behind the hips (follow-through)', () => {
   f.update(1 / 60);
   f.setTarget(pose(1), new Vector3(), 1);
   run(f, 0.2);
-  const hipsLeft = f.local.hips.angleTo(pose(1).hips);
-  const finLeft = f.local.fin.angleTo(pose(1).fin);
+  const hipsLeft = f.rotations.hips.angleTo(pose(1).hips);
+  const finLeft = f.rotations.fin.angleTo(pose(1).fin);
   assert.ok(finLeft > hipsLeft * 1.5, `hips ${hipsLeft.toFixed(2)} rad behind, fin ${finLeft.toFixed(2)} rad`);
 });
 
@@ -70,7 +70,7 @@ test('float = 0 is locked to the tracking', () => {
   f.setTarget(pose(1), new Vector3(0.7, 0, 0), 1.1);
   f.update(1 / 60);
   assert.ok(f.displayPosition.distanceTo(new Vector3(0.7, 0, 0)) < 1e-9, 'no lag, no bob');
-  assert.ok(f.local.tail5.angleTo(pose(1).tail5) < 1e-6);
+  assert.ok(f.rotations.tail5.angleTo(pose(1).tail5) < 1e-6);
 });
 
 test('a huge jump (someone else) snaps instead of flying across the screen', () => {

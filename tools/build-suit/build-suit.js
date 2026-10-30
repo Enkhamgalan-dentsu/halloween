@@ -201,6 +201,58 @@ export async function buildSuit(log = console.log) {
   return { glb, report };
 }
 
+// ---------------------------------------------------------------- already-rigged sources
+
+/** Sources that come with their own skeleton + skin: only optimized, never re-rigged. */
+export const RIGGED = /** @type {Record<string, { source: string, output: string, simplify: number, textureSize: number }>} */ ({
+  bonnie: {
+    // "Reanimated Melted Chocolate Bonnie" by OrangeSauceu, CC BY 4.0
+    source: '/assets/reanimated_melted_chocolate_bonnie.glb',
+    output: 'bonnie.glb',
+    simplify: 0.6,
+    textureSize: 1024,
+  },
+});
+
+/**
+ * Optimize an already-rigged GLB for phones: simplify each skinned mesh (keeping joints,
+ * weights and tangents), shrink textures to WebP, drop the source animations (the
+ * costume is driven by the wearer, not by clips). The skeleton is exported untouched.
+ * @param {string} name key of RIGGED
+ * @param {(msg: string) => void} log
+ */
+export async function buildRigged(name, log = console.log) {
+  const cfg = RIGGED[name];
+  if (!cfg) throw new Error(`Unknown rigged source "${name}"`);
+  await MeshoptSimplifier.ready;
+  log(`loading ${cfg.source}`);
+  const gltf = await new GLTFLoader().loadAsync(cfg.source);
+  const report = /** @type {Record<string, unknown>} */ ({ meshes: [] });
+  const done = new Set();
+  /** @type {THREE.Mesh[]} */
+  const meshes = [];
+  gltf.scene.traverse((o) => {
+    if (/** @type {THREE.Mesh} */ (o).isMesh) meshes.push(/** @type {THREE.Mesh} */ (o));
+  });
+  for (const mesh of meshes) {
+    const before = triCount(mesh.geometry);
+    mesh.geometry = simplify(mesh.geometry, cfg.simplify);
+    mesh.geometry.computeBoundingBox();
+    mesh.geometry.computeBoundingSphere();
+    shrinkTextures(/** @type {THREE.MeshStandardMaterial} */ (mesh.material), cfg.textureSize, done);
+    /** @type {unknown[]} */ (report.meshes).push({ mesh: mesh.name, trisBefore: before, trisAfter: triCount(mesh.geometry) });
+    log(`${mesh.name}: ${before} → ${triCount(mesh.geometry)} tris`);
+  }
+  gltf.scene.updateMatrixWorld(true);
+  log('exporting (animations dropped)');
+  const glb = await withImageQuality(CONFIG.imageQuality, async () =>
+    /** @type {ArrayBuffer} */ (await new GLTFExporter().parseAsync(gltf.scene, { binary: true, animations: [] })),
+  );
+  report.bytes = glb.byteLength;
+  log(`done: ${(glb.byteLength / 1e6).toFixed(2)} MB`);
+  return { glb, report, output: cfg.output };
+}
+
 // ---------------------------------------------------------------- skeleton
 
 /** New joint positions after scaling each chain segment along its length. */
@@ -259,22 +311,28 @@ function simplify(/** @type {THREE.BufferGeometry} */ geom, /** @type {number} *
   return compact(geom, simplified);
 }
 
-/** Keep only referenced vertices; copy position/normal/tangent/uv. */
+/**
+ * Keep only referenced vertices. Copies EVERY attribute with its original array type
+ * (skinIndex must stay an integer array, skinWeight may be normalized, …).
+ */
 function compact(/** @type {THREE.BufferGeometry} */ geom, /** @type {Uint32Array} */ index) {
   const remap = new Int32Array(geom.attributes.position.count).fill(-1);
   let n = 0;
   for (const i of index) if (remap[i] === -1) remap[i] = n++;
   const out = new THREE.BufferGeometry();
-  for (const name of ['position', 'normal', 'tangent', 'uv']) {
-    const a = geom.getAttribute(name);
-    if (!a) continue;
-    const arr = new Float32Array(n * a.itemSize);
+  for (const [name, attr] of Object.entries(geom.attributes)) {
+    const a = /** @type {THREE.BufferAttribute} */ (attr);
+    const interleaved = /** @type {any} */ (a).isInterleavedBufferAttribute === true;
+    const Ctor = /** @type {any} */ (interleaved ? Float32Array : a.array.constructor);
+    const arr = new Ctor(n * a.itemSize);
     for (let i = 0; i < remap.length; i++) {
       const j = remap[i];
-      if (j < 0) continue;
-      for (let c = 0; c < a.itemSize; c++) arr[j * a.itemSize + c] = a.getComponent(i, c);
+      if (j === undefined || j < 0) continue;
+      for (let c = 0; c < a.itemSize; c++) {
+        arr[j * a.itemSize + c] = interleaved ? a.getComponent(i, c) : a.array[i * a.itemSize + c];
+      }
     }
-    out.setAttribute(name, new THREE.BufferAttribute(arr, a.itemSize));
+    out.setAttribute(name, new THREE.BufferAttribute(arr, a.itemSize, interleaved ? false : a.normalized));
   }
   const idx = n < 65536 ? new Uint16Array(index.length) : new Uint32Array(index.length);
   for (let k = 0; k < index.length; k++) idx[k] = remap[/** @type {number} */ (index[k])];
@@ -433,6 +491,9 @@ function shrinkTextures(/** @type {THREE.MeshStandardMaterial} */ m, /** @type {
     [m.metalnessMap, Math.max(size / 2, 128), data],
     [m.emissiveMap, size, color],
     [m.aoMap, Math.max(size / 2, 128), data],
+    // MeshPhysicalMaterial (KHR_materials_specular etc.)
+    [/** @type {any} */ (m).specularColorMap ?? null, Math.max(size / 2, 128), data],
+    [/** @type {any} */ (m).specularIntensityMap ?? null, Math.max(size / 2, 128), data],
   ];
   for (const [tex, max, type] of maps) {
     if (!tex || done.has(tex)) continue;

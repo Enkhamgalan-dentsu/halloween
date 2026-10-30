@@ -1,52 +1,92 @@
-import { Bone, Group, SkeletonHelper, Vector3 } from 'three';
-import type { Object3D, Quaternion } from 'three';
+import { Bone, Group, Quaternion, SkeletonHelper, Vector3 } from 'three';
+import type { Object3D } from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { BONE_KEYS, SUIT_BONES, jointNodeName } from './bones.ts';
 import type { BoneKey } from './bones.ts';
-import { JOINT_NAMES } from './rest-pose.ts';
-import type { RestPose } from './rest-pose.ts';
-import type { SolvedPose } from './solver.ts';
+import { analyzeRig } from './profiles.ts';
+import type { RigAnalysis, SuitProfile } from './profiles.ts';
 
 /** Show the suit once tracking confidence is above this; hide below the lower bound. */
 const SHOW_ABOVE = 0.5;
 const HIDE_BELOW = 0.25;
 
-/** The loaded, rigged suit: a root Group (placed/scaled each frame) + named bones. */
+interface ChainEntry {
+  bone: Bone;
+  key: BoneKey | null;
+  /** Index of the parent bone in the chain, or −1 if the parent is not a bone. */
+  parent: number;
+  /** World rotation (model space) of a non-bone parent — never moves. */
+  staticParentWorld: Quaternion;
+  restLocal: Quaternion;
+  restWorld: Quaternion;
+}
+
+/**
+ * A loaded, rigged suit. `root` is placed and scaled every frame; inside it the model is
+ * offset so the profile's anchor (the suit's hips) sits at the root's origin.
+ *
+ * `applyDeltas` takes the solver's model-space "rotation away from rest" per bone key and
+ * walks the real skeleton (parents first): driven bones get  W = delta · restWorld,
+ * undriven bones (Bonnie's Hip_Bn_05, fingers, ears, the mermaid's chain ends…) keep their
+ * rest offset from their parent, and every bone's local rotation is parentW⁻¹ · W. That
+ * makes any rest pose work — identity (mermaid) or an FBX T-pose (Bonnie).
+ */
 export class Suit {
   readonly root = new Group();
-  /** Rest-pose joints read from the skeleton (metres, hips at origin). */
-  readonly rest: RestPose;
-  private readonly bones: Record<BoneKey, Bone>;
+  readonly profile: SuitProfile;
+  readonly rig: RigAnalysis;
+  private readonly chain: ChainEntry[] = [];
+  private readonly world: Quaternion[] = [];
+  private readonly tmp = new Quaternion();
   private shown = false;
 
-  static async load(url: string): Promise<Suit> {
-    const gltf = await new GLTFLoader().loadAsync(url);
-    return new Suit(gltf.scene);
+  static async load(profile: SuitProfile, onProgress?: (loaded: number, total: number) => void): Promise<Suit> {
+    const gltf = await new GLTFLoader().loadAsync(profile.url, (e) => onProgress?.(e.loaded, e.total));
+    return new Suit(profile, gltf.scene);
   }
 
-  private constructor(model: Object3D) {
-    this.root.name = 'suit-root';
-    this.root.add(model);
+  /** Wrap an already-loaded model (tests, tools). */
+  static fromModel(profile: SuitProfile, model: Object3D): Suit {
+    return new Suit(profile, model);
+  }
+
+  private constructor(profile: SuitProfile, model: Object3D) {
+    this.profile = profile;
+    this.root.name = `suit-${profile.id}`;
+    const holder = new Group();
+    holder.add(model);
+    this.root.add(holder);
     this.root.updateMatrixWorld(true);
 
     const find = (name: string): Object3D => {
       const o = model.getObjectByName(name);
-      if (!o) throw new Error(`Suit GLB is missing node "${name}"`);
+      if (!o) throw new Error(`Suit "${profile.id}" is missing node "${name}"`);
       return o;
     };
+    this.rig = analyzeRig(profile, (name) => find(name).getWorldPosition(new Vector3()));
+    holder.position.copy(this.rig.anchor).negate();
+    this.root.updateMatrixWorld(true);
 
-    const bones = {} as Record<BoneKey, Bone>;
-    for (const key of BONE_KEYS) {
-      const o = find(SUIT_BONES[key]);
-      if (!(o instanceof Bone)) throw new Error(`Suit node "${SUIT_BONES[key]}" is not a bone`);
-      bones[key] = o;
+    const keyOf = new Map<string, BoneKey>();
+    for (const [key, b] of Object.entries(profile.bones) as Array<[BoneKey, { node: string }]>) {
+      if (!(find(b.node) instanceof Bone)) throw new Error(`Suit node "${b.node}" is not a bone`);
+      keyOf.set(b.node, key);
     }
-    this.bones = bones;
-
-    const hips = find(jointNodeName('Hips')).getWorldPosition(new Vector3());
-    const rest = {} as RestPose;
-    for (const j of JOINT_NAMES) rest[j] = find(jointNodeName(j)).getWorldPosition(new Vector3()).sub(hips);
-    this.rest = rest;
+    const index = new Map<Object3D, number>();
+    model.traverse((o) => {
+      if (!(o instanceof Bone)) return;
+      // traverse() is depth-first pre-order: a bone's parent is always already indexed.
+      const parent = o.parent ? (index.get(o.parent) ?? -1) : -1;
+      index.set(o, this.chain.length);
+      this.chain.push({
+        bone: o,
+        key: keyOf.get(o.name) ?? null,
+        parent,
+        staticParentWorld: o.parent ? o.parent.getWorldQuaternion(new Quaternion()) : new Quaternion(),
+        restLocal: o.quaternion.clone(),
+        restWorld: o.getWorldQuaternion(new Quaternion()),
+      });
+      this.world.push(new Quaternion());
+    });
 
     // Bounding volumes are from the bind pose; a posed suit would get culled wrongly.
     model.traverse((o) => {
@@ -55,12 +95,16 @@ export class Suit {
     this.root.visible = false;
   }
 
-  apply(pose: SolvedPose): void {
-    this.applyLocal(pose.local);
-  }
-
-  applyLocal(local: Record<BoneKey, Quaternion>): void {
-    for (const key of BONE_KEYS) this.bones[key].quaternion.copy(local[key]);
+  /** Model-space rotations away from rest, per bone key (solver / follower output). */
+  applyDeltas(delta: Record<BoneKey, Quaternion>): void {
+    for (let i = 0; i < this.chain.length; i++) {
+      const c = this.chain[i] as ChainEntry;
+      const parentWorld = c.parent >= 0 ? (this.world[c.parent] as Quaternion) : c.staticParentWorld;
+      const w = this.world[i] as Quaternion;
+      if (c.key) w.copy(delta[c.key]).multiply(c.restWorld);
+      else w.copy(parentWorld).multiply(c.restLocal);
+      c.bone.quaternion.copy(this.tmp.copy(parentWorld).invert().multiply(w));
+    }
   }
 
   place(position: Vector3, scale: number): void {

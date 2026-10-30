@@ -27,6 +27,10 @@ const BONE_LAG: Record<BoneKey, number> = {
   tail4: 0.32,
   tail5: 0.37,
   fin: 0.42,
+  leftUpperLeg: 0.16,
+  leftLowerLeg: 0.2,
+  rightUpperLeg: 0.16,
+  rightLowerLeg: 0.2,
 };
 
 export interface FollowOptions {
@@ -77,12 +81,13 @@ function smoothDamp(current: number, target: number, velocity: { v: number }, sm
 export class SuitFollower {
   readonly position = new Vector3();
   scale = 1;
-  readonly local = {} as Record<BoneKey, Quaternion>;
+  /** Displayed model-space bone deltas (see SolvedPose.delta). */
+  readonly rotations = {} as Record<BoneKey, Quaternion>;
 
   private readonly opts: FollowOptions;
   private readonly targetPosition = new Vector3();
   private targetScale = 1;
-  private readonly targetLocal = {} as Record<BoneKey, Quaternion>;
+  private readonly targetRotations = {} as Record<BoneKey, Quaternion>;
   private readonly velocity = [{ v: 0 }, { v: 0 }, { v: 0 }];
   private readonly scaleVelocity = { v: 0 };
   private hasTarget = false;
@@ -94,13 +99,13 @@ export class SuitFollower {
   constructor(opts: Partial<FollowOptions> = {}) {
     this.opts = { ...DEFAULT_FOLLOW, ...opts };
     for (const key of BONE_KEYS) {
-      this.local[key] = new Quaternion();
-      this.targetLocal[key] = new Quaternion();
+      this.rotations[key] = new Quaternion();
+      this.targetRotations[key] = new Quaternion();
     }
   }
 
-  setTarget(local: Record<BoneKey, Quaternion>, position: Vector3, scale: number): void {
-    for (const key of BONE_KEYS) this.targetLocal[key].copy(local[key]);
+  setTarget(rotations: Record<BoneKey, Quaternion>, position: Vector3, scale: number): void {
+    for (const key of BONE_KEYS) this.targetRotations[key].copy(rotations[key]);
     if (this.hasTarget && position.distanceTo(this.targetPosition) > this.opts.snapDistance) this.needsSnap = true;
     this.targetPosition.copy(position);
     this.targetScale = scale;
@@ -121,7 +126,7 @@ export class SuitFollower {
     if (this.needsSnap || f <= 0) {
       this.position.copy(this.targetPosition);
       this.scale = this.targetScale;
-      for (const key of BONE_KEYS) this.local[key].copy(this.targetLocal[key]);
+      for (const key of BONE_KEYS) this.rotations[key].copy(this.targetRotations[key]);
       for (const v of this.velocity) v.v = 0;
       this.scaleVelocity.v = 0;
       this.needsSnap = false;
@@ -136,7 +141,7 @@ export class SuitFollower {
       for (const key of BONE_KEYS) {
         // Exponential approach: ~95% of the way after 3 × lag.
         const t = 1 - Math.exp(-dt / (BONE_LAG[key] * f));
-        this.local[key].slerp(this.targetLocal[key], t);
+        this.rotations[key].slerp(this.targetRotations[key], t);
       }
     }
 

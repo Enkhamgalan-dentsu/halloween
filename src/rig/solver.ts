@@ -1,11 +1,10 @@
 import { Euler, Matrix4, Quaternion, Vector3 } from 'three';
 import { POSE } from '../tracking/pose.ts';
 import type { PoseFrame } from '../tracking/pose.ts';
-import { BONE_KEYS, BONE_PARENT, BONE_SEGMENT } from './bones.ts';
+import { BONE_KEYS } from './bones.ts';
 import type { BoneKey } from './bones.ts';
 import type { Facing } from './facing.ts';
 import { reliabilityOf, swapLeftRight, toThree, trust, visibilityOf } from './landmarks.ts';
-import type { RestPose } from './rest-pose.ts';
 
 export interface SolverOptions {
   /** Radians of idle tail sway (0 disables — tests). */
@@ -35,10 +34,12 @@ export const DEFAULT_SOLVER_OPTIONS: SolverOptions = {
 };
 
 export interface SolvedPose {
-  /** Rotation of each bone in model space (the suit root has no rotation). */
-  world: Record<BoneKey, Quaternion>;
-  /** Rotation relative to the parent bone — what goes on THREE.Bone.quaternion. */
-  local: Record<BoneKey, Quaternion>;
+  /**
+   * Model-space rotation of each bone AWAY FROM ITS REST POSE (identity = rest). The suit
+   * turns these into local bone rotations through its own hierarchy and rest rotations
+   * (suit.ts), so the same solver drives any rig.
+   */
+  delta: Record<BoneKey, Quaternion>;
   /** 0..1 — how much the torso landmarks can be trusted (visibility or presence). */
   confidence: number;
   /** True when MediaPipe's left/right labels were swapped to match `facing`. */
@@ -46,10 +47,27 @@ export interface SolvedPose {
 }
 
 const DOWN = new Vector3(0, -1, 0);
+
+/** Used when a suit doesn't bind a bone (its delta is computed but never applied). */
+const FALLBACK_REST_DIR: Record<BoneKey, readonly [number, number, number]> = {
+  hips: [0, 1, 0], spine: [0, 1, 0], spine1: [0, 1, 0], chest: [0, 1, 0], neck: [0, 1, 0], head: [0, 1, 0],
+  leftShoulder: [1, 0, 0], leftUpperArm: [0.5, -0.85, 0], leftLowerArm: [0.3, -0.95, 0], leftHand: [0.2, -1, 0],
+  rightShoulder: [-1, 0, 0], rightUpperArm: [-0.5, -0.85, 0], rightLowerArm: [-0.3, -0.95, 0], rightHand: [-0.2, -1, 0],
+  leftUpperLeg: [0, -1, 0], leftLowerLeg: [0, -1, 0], rightUpperLeg: [0, -1, 0], rightLowerLeg: [0, -1, 0],
+  tail1: [0, -1, 0], tail2: [0, -1, 0], tail3: [0, -1, 0], tail4: [0, -1, 0], tail5: [0, -1, 0], fin: [0, -1, 0],
+};
+
+/** Where hidden limbs relax to, in the parent's (chest / hips) frame. */
+const RELAXED_ARM = { left: new Vector3(0.18, -1, 0.04).normalize(), right: new Vector3(-0.18, -1, 0.04).normalize() };
+const RELAXED_LEG = { left: new Vector3(0.04, -1, 0).normalize(), right: new Vector3(-0.04, -1, 0).normalize() };
 const IDENTITY = new Quaternion();
 const SIDES = [
-  { s: POSE.LEFT_SHOULDER, e: POSE.LEFT_ELBOW, w: POSE.LEFT_WRIST, i: POSE.LEFT_INDEX, p: POSE.LEFT_PINKY, upper: 'leftUpperArm', lower: 'leftLowerArm', hand: 'leftHand', shoulder: 'leftShoulder' },
-  { s: POSE.RIGHT_SHOULDER, e: POSE.RIGHT_ELBOW, w: POSE.RIGHT_WRIST, i: POSE.RIGHT_INDEX, p: POSE.RIGHT_PINKY, upper: 'rightUpperArm', lower: 'rightLowerArm', hand: 'rightHand', shoulder: 'rightShoulder' },
+  { side: 'left', s: POSE.LEFT_SHOULDER, e: POSE.LEFT_ELBOW, w: POSE.LEFT_WRIST, i: POSE.LEFT_INDEX, p: POSE.LEFT_PINKY, upper: 'leftUpperArm', lower: 'leftLowerArm', hand: 'leftHand', shoulder: 'leftShoulder' },
+  { side: 'right', s: POSE.RIGHT_SHOULDER, e: POSE.RIGHT_ELBOW, w: POSE.RIGHT_WRIST, i: POSE.RIGHT_INDEX, p: POSE.RIGHT_PINKY, upper: 'rightUpperArm', lower: 'rightLowerArm', hand: 'rightHand', shoulder: 'rightShoulder' },
+] as const;
+const LEGS = [
+  { side: 'left', h: POSE.LEFT_HIP, k: POSE.LEFT_KNEE, a: POSE.LEFT_ANKLE, upper: 'leftUpperLeg', lower: 'leftLowerLeg' },
+  { side: 'right', h: POSE.RIGHT_HIP, k: POSE.RIGHT_KNEE, a: POSE.RIGHT_ANKLE, upper: 'rightUpperLeg', lower: 'rightLowerLeg' },
 ] as const;
 const TAILS = ['tail1', 'tail2', 'tail3', 'tail4', 'tail5'] as const;
 
@@ -60,13 +78,14 @@ function quatRecord(): Record<BoneKey, Quaternion> {
 }
 
 /**
- * Landmarks → bone rotations for the mermaid suit. Every suit bone has identity rest
- * rotation, so "rest direction" is just the offset to the child joint in model space.
+ * Landmarks → bone rotations, as model-space deltas from each bone's rest pose. Works for
+ * any rig given each bone's rest direction (profiles.ts → analyzeRig).
  *
  *  - hips / chest: orthonormal basis from hip line / shoulder line + spine-up vector
  *  - spine, spine1, neck: slerp between their neighbours
  *  - head: ears + nose basis (front view only), clamped relative to the chest
- *  - arms: swing each bone from its (parent-rotated) rest direction to the observed one
+ *  - arms / legs: swing each bone from its (parent-rotated) rest direction to the observed
+ *    one; hidden limbs relax (arms hang, legs straight) instead of springing to the rest pose
  *  - tail: the wearer's legs as a *delta from standing*, applied on top of the curved
  *    rest tail (keeps the S-curve), plus a slow idle sway
  *  - fin: trails along the floor behind the feet
@@ -74,7 +93,7 @@ function quatRecord(): Record<BoneKey, Quaternion> {
  * Output objects are reused between calls.
  */
 export class PoseSolver {
-  readonly out: SolvedPose = { world: quatRecord(), local: quatRecord(), confidence: 0, swapped: false };
+  readonly out: SolvedPose = { delta: quatRecord(), confidence: 0, swapped: false };
   private readonly opts: SolverOptions;
   private readonly restDir = {} as Record<BoneKey, Vector3>;
   private readonly P: Vector3[] = Array.from({ length: 33 }, () => new Vector3());
@@ -88,23 +107,25 @@ export class PoseSolver {
   private readonly v2 = new Vector3();
   private readonly v3 = new Vector3();
   private readonly v4 = new Vector3();
+  private readonly v5 = new Vector3();
+  private readonly vAim = new Vector3();
+  private readonly relaxed = new Vector3();
   private readonly q1 = new Quaternion();
   private readonly q2 = new Quaternion();
   private readonly q3 = new Quaternion();
   private readonly qHead = new Quaternion();
   private readonly e = new Euler();
 
-  constructor(rest: RestPose, opts: Partial<SolverOptions> = {}) {
+  constructor(restDir: Partial<Record<BoneKey, Vector3>>, opts: Partial<SolverOptions> = {}) {
     this.opts = { ...DEFAULT_SOLVER_OPTIONS, ...opts };
     for (const key of BONE_KEYS) {
-      const [from, to] = BONE_SEGMENT[key];
-      this.restDir[key] = rest[to].clone().sub(rest[from]).normalize();
+      this.restDir[key] = (restDir[key]?.clone() ?? new Vector3(...FALLBACK_REST_DIR[key])).normalize();
     }
   }
 
   solve(frame: PoseFrame, facing: Facing, timeMs: number): SolvedPose {
     const { P, vis, rel, out } = this;
-    const W = out.world;
+    const W = out.delta;
     for (let i = 0; i < 33; i++) {
       const l = frame.world[i];
       if (l) toThree(l, P[i] as Vector3);
@@ -134,24 +155,31 @@ export class PoseSolver {
     // --- arms (position reliability: from behind, arms are "self-occluded" but well located)
     for (const side of SIDES) {
       W[side.shoulder].copy(W.chest);
-      const ve = this.at(side.e, rel);
-      const vw = this.at(side.w, rel);
-      this.aim(W[side.shoulder], side.upper, this.dir(side.s, side.e), trust(ve), W[side.upper]);
-      this.aim(W[side.upper], side.lower, this.dir(side.e, side.w), Math.min(trust(ve), trust(vw)), W[side.lower]);
+      const ve = trust(this.at(side.e, rel));
+      const vw = trust(this.at(side.w, rel));
+      const relaxed = this.relaxed.copy(RELAXED_ARM[side.side]).applyQuaternion(W.chest);
+      this.aim(W[side.shoulder], side.upper, this.dir(side.s, side.e), ve, relaxed, W[side.upper]);
+      // A hidden forearm / hand just continues the bone before it.
+      this.boneDir(side.upper, W[side.upper], this.relaxed);
+      this.aim(W[side.upper], side.lower, this.dir(side.e, side.w), Math.min(ve, vw), this.relaxed, W[side.lower]);
+      this.boneDir(side.lower, W[side.lower], this.relaxed);
       const handMid = this.mid(side.i, side.p, this.v4);
       this.aim(W[side.lower], side.hand, this.v2.copy(handMid).sub(this.p(side.w)),
-        Math.min(trust(vw), trust(Math.min(this.at(side.i, rel), this.at(side.p, rel)))), W[side.hand]);
+        Math.min(vw, trust(Math.min(this.at(side.i, rel), this.at(side.p, rel)))), this.relaxed, W[side.hand]);
     }
 
-    // --- tail from legs
+    // --- legs (bipeds) — computed for every suit, applied only where the suit has legs
+    for (const leg of LEGS) {
+      const vk = trust(this.at(leg.k, rel));
+      const va = trust(this.at(leg.a, rel));
+      const relaxed = this.relaxed.copy(RELAXED_LEG[leg.side]).applyQuaternion(W.hips);
+      this.aim(W.hips, leg.upper, this.dir(leg.h, leg.k), vk, relaxed, W[leg.upper]);
+      this.boneDir(leg.upper, W[leg.upper], this.relaxed);
+      this.aim(W[leg.upper], leg.lower, this.dir(leg.k, leg.a), Math.min(vk, va), this.relaxed, W[leg.lower]);
+    }
+
+    // --- tail from legs (mermaid)
     this.solveTail(hipMid, timeMs);
-
-    // --- local rotations
-    for (const key of BONE_KEYS) {
-      const parent = BONE_PARENT[key];
-      if (parent === null) out.local[key].copy(W[key]);
-      else out.local[key].copy(W[parent]).invert().multiply(W[key]);
-    }
     return out;
   }
 
@@ -175,7 +203,7 @@ export class PoseSolver {
 
   private solveHead(facing: Facing): void {
     const { P, vis, opts } = this;
-    const W = this.out.world;
+    const W = this.out.delta;
     const faceTrust = facing === 'front'
       ? Math.min(trust(this.at(POSE.NOSE, vis)), trust(this.at(POSE.LEFT_EAR, vis)), trust(this.at(POSE.RIGHT_EAR, vis)))
       : 0;
@@ -204,7 +232,7 @@ export class PoseSolver {
 
   private solveTail(hipMid: Vector3, timeMs: number): void {
     const { rel: vis, opts } = this; // position reliability (presence counts: legs from behind)
-    const W = this.out.world;
+    const W = this.out.delta;
     const hipsInv = this.q3.copy(W.hips).invert();
 
     const kneeMid = this.mid(POSE.LEFT_KNEE, POSE.RIGHT_KNEE, new Vector3());
@@ -252,21 +280,31 @@ export class PoseSolver {
     if (toes.lengthSq() > 1e-6) forward.lerp(toes.normalize(), feetTrust);
     const trail = forward.lengthSq() > 1e-6 ? forward.normalize().negate() : forward.set(0, 0, -1);
     trail.y = -opts.finDrop;
-    this.aim(W.tail5, 'fin', trail, 1, W.fin);
+    this.aim(W.tail5, 'fin', trail, 1, trail, W.fin);
   }
 
   // ---------------------------------------------------------------- helpers
 
-  /** out = parentWorld, then swung so the bone's rest direction points along `target`. */
-  private aim(parentWorld: Quaternion, key: BoneKey, target: Vector3, weight: number, out: Quaternion): void {
-    if (weight <= 0 || target.lengthSq() < 1e-10) {
-      out.copy(parentWorld);
-      return;
-    }
-    const d = this.v3.copy(this.restDir[key]).applyQuaternion(parentWorld).normalize();
-    const swing = this.q1.setFromUnitVectors(d, target.normalize());
-    const full = this.q2.copy(swing).multiply(parentWorld);
-    out.slerpQuaternions(parentWorld, full, weight);
+  /**
+   * out = parent delta, then swung so the bone's (parent-rotated) rest direction points
+   * along `target`. With weight < 1 the direction blends toward `relaxed` (both model
+   * space), so hidden limbs hang naturally instead of snapping to the rig's rest pose
+   * (Bonnie's rest pose is a T-pose).
+   */
+  private aim(parent: Quaternion, key: BoneKey, target: Vector3, weight: number, relaxed: Vector3, out: Quaternion): void {
+    const want = this.vAim;
+    const hasTarget = target.lengthSq() > 1e-10 && weight > 0;
+    if (hasTarget) want.copy(target).normalize().multiplyScalar(weight).addScaledVector(this.v5.copy(relaxed).normalize(), 1 - weight);
+    else want.copy(relaxed);
+    if (want.lengthSq() < 1e-10) want.copy(relaxed);
+    const d = this.v3.copy(this.restDir[key]).applyQuaternion(parent).normalize();
+    const swing = this.q1.setFromUnitVectors(d, want.normalize());
+    out.copy(swing).multiply(parent);
+  }
+
+  /** Current model-space direction of a solved bone. */
+  private boneDir(key: BoneKey, delta: Quaternion, out: Vector3): Vector3 {
+    return out.copy(this.restDir[key]).applyQuaternion(delta);
   }
 
   /** Rotation whose X axis follows `xRaw` and Y axis is exactly `y` (unit). */

@@ -1,8 +1,8 @@
 :root {
-  --bg: #0b0b0f;
-  --fg: #f4ece1;
-  --accent: #ff7a18;
-  --muted: #a89f94;
+  --bg: #04110f;
+  --fg: #e8f3ef;
+  --accent: #5fe0c4;
+  --muted: #9bb8b0;
   color-scheme: dark;
 }
 
@@ -21,10 +21,7 @@ html, body {
   touch-action: none;
 }
 
-#stage {
-  position: fixed;
-  inset: 0;
-}
+#stage { position: fixed; inset: 0; }
 
 #camera,
 #overlay {
@@ -40,35 +37,263 @@ html, body {
 body.mirrored #camera,
 body.mirrored #overlay { transform: scaleX(-1); }
 
-.screen {
+/* ------------------------------------------------------------------ loading screen */
+
+.loader {
   position: fixed;
   inset: 0;
+  z-index: 20;
+  overflow: hidden;
+  background: #020807;
+  transition: opacity 0.8s ease, filter 0.8s ease;
+}
+
+.loader-image {
+  position: absolute;
+  inset: -6%;
+  background: url('/loading.jpg') 54% 50% / cover no-repeat;
+  filter: contrast(1.15) brightness(0.85) saturate(1.1);
+  /* The figure slowly creeps toward you; glitches jolt it now and then. */
+  animation:
+    creep 26s ease-in forwards,
+    glitch 5.3s steps(1) infinite,
+    flicker 3.7s linear infinite;
+}
+
+@keyframes creep {
+  from { transform: scale(1); }
+  to { transform: scale(1.22) translateY(2%); }
+}
+
+@keyframes glitch {
+  0%, 86%, 100% { clip-path: none; translate: 0 0; filter: contrast(1.15) brightness(0.85) saturate(1.1); }
+  87% { clip-path: inset(18% 0 61% 0); translate: -14px 0; filter: hue-rotate(40deg) contrast(1.6); }
+  88% { clip-path: inset(52% 0 27% 0); translate: 11px 0; filter: hue-rotate(-30deg) contrast(1.4); }
+  89% { clip-path: none; translate: -4px 2px; filter: brightness(1.6) contrast(1.3); }
+  90% { clip-path: inset(70% 0 8% 0); translate: 18px 0; }
+  91% { clip-path: none; translate: 0 0; filter: brightness(0.5); }
+}
+
+@keyframes flicker {
+  0%, 100% { opacity: 1; }
+  41% { opacity: 1; }
+  42% { opacity: 0.55; }
+  43% { opacity: 1; }
+  76% { opacity: 0.85; }
+  77% { opacity: 0.35; }
+  78% { opacity: 0.9; }
+}
+
+.loader-noise {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  image-rendering: pixelated;
+  mix-blend-mode: overlay;
+  opacity: 0.28;
+  pointer-events: none;
+}
+
+.loader-scanlines {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(to bottom, rgb(0 0 0 / 0.38) 0 1px, transparent 1px 3px);
+  animation: scan 0.9s linear infinite;
+}
+
+@keyframes scan {
+  from { background-position-y: 0; }
+  to { background-position-y: 3px; }
+}
+
+/* A VHS tracking band rolling up the screen. */
+.loader-tracking {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 14%;
+  pointer-events: none;
+  background: linear-gradient(to bottom, transparent, rgb(190 255 235 / 0.12) 40%, rgb(255 255 255 / 0.2) 50%, rgb(190 255 235 / 0.1) 60%, transparent);
+  mix-blend-mode: screen;
+  animation: tracking 6.5s linear infinite;
+}
+
+@keyframes tracking {
+  from { top: 110%; }
+  to { top: -20%; }
+}
+
+.loader-vignette {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(ellipse at 54% 45%, transparent 30%, rgb(0 0 0 / 0.55) 70%, rgb(0 0 0 / 0.92) 100%);
+  animation: breathe 4.2s ease-in-out infinite;
+}
+
+@keyframes breathe {
+  0%, 100% { opacity: 0.85; }
+  50% { opacity: 1; }
+}
+
+.loader-content {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  bottom: calc(64px + env(safe-area-inset-bottom));
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
-  gap: 16px;
-  padding: 24px 16px calc(24px + env(safe-area-inset-bottom));
+  gap: 14px;
   text-align: center;
-  background: radial-gradient(circle at 50% 35%, #2a1530 0%, var(--bg) 70%);
 }
 
-.screen h1 { margin: 0; font-size: 2.2rem; letter-spacing: 0.04em; }
-.hint { margin: 0; color: var(--muted); max-width: 28ch; }
+.loader-title {
+  position: relative;
+  margin: 0;
+  font-family: 'Courier New', ui-monospace, monospace;
+  font-size: clamp(1.6rem, 8vw, 2.6rem);
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #d9fff4;
+  text-shadow: 0 0 12px rgb(95 224 196 / 0.7);
+  animation: text-flicker 2.9s linear infinite;
+}
 
-#start-btn {
-  font: inherit;
-  font-size: 1.15rem;
-  font-weight: 600;
-  padding: 14px 28px;
-  border: 0;
-  border-radius: 999px;
+/* Chromatic split on the title. */
+.loader-title::before,
+.loader-title::after {
+  content: attr(data-text);
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.loader-title::before { color: #ff2a55; mix-blend-mode: screen; animation: split-a 2.3s steps(1) infinite; }
+.loader-title::after { color: #22e6ff; mix-blend-mode: screen; animation: split-b 3.1s steps(1) infinite; }
+
+@keyframes split-a {
+  0%, 90%, 100% { transform: translate(0); opacity: 0; }
+  91% { transform: translate(-4px, 1px); opacity: 0.8; }
+  94% { transform: translate(3px, -1px); opacity: 0.6; }
+}
+@keyframes split-b {
+  0%, 80%, 100% { transform: translate(0); opacity: 0; }
+  81% { transform: translate(4px, 0); opacity: 0.8; }
+  84% { transform: translate(-3px, 1px); opacity: 0.6; }
+}
+@keyframes text-flicker {
+  0%, 100% { opacity: 1; }
+  22% { opacity: 1; }
+  23% { opacity: 0.2; }
+  24% { opacity: 1; }
+  61% { opacity: 0.85; }
+  62% { opacity: 0.3; }
+  64% { opacity: 1; }
+}
+
+.loader-bar {
+  width: min(70vw, 280px);
+  height: 3px;
+  background: rgb(95 224 196 / 0.15);
+  overflow: hidden;
+}
+.loader-fill {
+  width: 0;
+  height: 100%;
   background: var(--accent);
-  color: #1a0d00;
+  box-shadow: 0 0 10px var(--accent);
+  transition: width 0.4s ease;
 }
-#start-btn:disabled { opacity: 0.6; }
 
-#status { min-height: 1.4em; margin: 0; color: var(--muted); max-width: 32ch; }
+.loader-status {
+  margin: 0;
+  min-height: 2.8em; /* two lines: long whispers wrap without making the title jump */
+  max-width: 32ch;
+  font-family: 'Courier New', ui-monospace, monospace;
+  font-size: 0.95rem;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+.retry-btn {
+  font: inherit;
+  font-size: 1.05rem;
+  font-weight: 600;
+  padding: 12px 26px;
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  background: rgb(4 17 15 / 0.7);
+  color: var(--fg);
+}
+
+/* Exit: a burst of white static, then gone. */
+.loader--out { animation: static-out 0.9s ease-in forwards; }
+@keyframes static-out {
+  0% { opacity: 1; filter: none; }
+  25% { opacity: 1; filter: brightness(2.4) contrast(2) saturate(0); }
+  45% { opacity: 1; filter: brightness(0.3); }
+  100% { opacity: 0; filter: brightness(3) blur(6px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .loader-image, .loader-scanlines, .loader-tracking, .loader-vignette, .loader-title,
+  .loader-title::before, .loader-title::after { animation: none; }
+}
+
+/* ------------------------------------------------------------------ credits, pill, debug */
+
+.credit {
+  position: absolute;
+  bottom: calc(14px + env(safe-area-inset-bottom));
+  left: 16px;
+  right: 16px;
+  margin: 0;
+  font-size: 0.7rem;
+  line-height: 1.4;
+  text-align: center;
+  color: rgb(232 243 239 / 0.6);
+}
+.credit a { color: inherit; }
+
+.ar-credit {
+  position: fixed;
+  left: 10px;
+  bottom: calc(6px + env(safe-area-inset-bottom));
+  margin: 0;
+  font-size: 0.62rem;
+  color: rgb(255 255 255 / 0.45);
+  pointer-events: none;
+  z-index: 4;
+}
+
+#debug-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+#pill {
+  position: fixed;
+  left: 50%;
+  bottom: calc(28px + env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  max-width: calc(100% - 32px);
+  padding: 10px 18px;
+  border-radius: 999px;
+  background: rgb(4 17 15 / 0.75);
+  color: var(--fg);
+  font-size: 0.95rem;
+  text-align: center;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  pointer-events: none;
+  z-index: 5;
+}
 
 #debug-hud {
   position: fixed;
@@ -83,40 +308,3 @@ body.mirrored #overlay { transform: scaleX(-1); }
   pointer-events: none;
   z-index: 10;
 }
-
-#debug-canvas {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  pointer-events: none;
-}
-
-#pill {
-  position: fixed;
-  left: 50%;
-  bottom: calc(24px + env(safe-area-inset-bottom));
-  transform: translateX(-50%);
-  max-width: calc(100% - 32px);
-  padding: 10px 18px;
-  border-radius: 999px;
-  background: rgb(11 11 15 / 0.75);
-  color: var(--fg);
-  font-size: 0.95rem;
-  text-align: center;
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
-  pointer-events: none;
-  z-index: 5;
-}
-
-.credit {
-  position: absolute;
-  bottom: calc(12px + env(safe-area-inset-bottom));
-  left: 16px;
-  right: 16px;
-  margin: 0;
-  font-size: 0.72rem;
-  color: var(--muted);
-}
-.credit a { color: inherit; }
