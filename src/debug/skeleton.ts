@@ -21,6 +21,7 @@ const COLOR_RIGHT = '#58d0ff';
 const COLOR_CENTRE = '#f4ece1';
 const COLOR_OTHER = 'rgba(255, 255, 255, 0.35)';
 const VISIBLE = 0.5;
+const FACE_COLORS: Record<string, string> = { match: '#4dff88', other: '#ff4d4d', unsure: '#ffe14d', 'no-face': '#888' };
 
 function sideColor(a: number, b: number): string {
   if (a < 11 || b < 11) return COLOR_CENTRE;
@@ -57,19 +58,21 @@ export class SkeletonOverlay {
     wearer: PoseFrame | null,
     others: readonly PoseFrame[],
     mapping: CoverMapping,
-    markers: ReadonlyArray<{ x: number; y: number; ageMs: number }> = [],
+    faces: ReadonlyArray<{ x: number; y: number; verdict: string; ageMs: number }> = [],
   ): void {
     const { ctx } = this;
     ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
     for (const other of others) this.drawPose(other.image, mapping, COLOR_OTHER, 2);
     if (wearer) this.drawPose(wearer.image, mapping, null, 4);
-    // Recently seen QR markers: a fading square.
-    for (const m of markers) {
-      const p = videoToView(m.x, m.y, mapping);
-      ctx.globalAlpha = Math.max(0, 1 - m.ageMs / 1500);
-      ctx.strokeStyle = '#ffe14d';
+    // Recent face checks: a fading ring — green = the wearer, red = someone else.
+    for (const f of faces) {
+      const p = videoToView(f.x, f.y, mapping);
+      ctx.globalAlpha = Math.max(0, 1 - f.ageMs / 1500);
+      ctx.strokeStyle = FACE_COLORS[f.verdict] ?? '#999';
       ctx.lineWidth = 3;
-      ctx.strokeRect(p.x - 18, p.y - 18, 36, 36);
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 26, 0, Math.PI * 2);
+      ctx.stroke();
     }
     ctx.globalAlpha = 1;
   }

@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Enroll the wearer</title>
+    <style>
+      :root { color-scheme: dark; --ok: #4dff88; --bad: #ff4d4d; --meh: #ffe14d; }
+      html, body { margin: 0; background: #0d0b10; color: #eee; font: 15px/1.45 system-ui, sans-serif; }
+      main { max-width: 960px; margin: 0 auto; padding: 16px; }
+      h1 { font-size: 22px; margin: 0 0 4px; }
+      p.lead { margin: 0 0 14px; color: #b9b1c4; }
+      .cols { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: 16px; }
+      @media (max-width: 760px) { .cols { grid-template-columns: 1fr; } }
+      .cam { position: relative; background: #000; border-radius: 10px; overflow: hidden; aspect-ratio: 4 / 3; }
+      .cam video, .cam canvas { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+      .cam .say { position: absolute; left: 0; right: 0; bottom: 0; padding: 10px; text-align: center; font-size: 18px; background: linear-gradient(transparent, #000c); }
+      .row { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
+      button, label.btn { font: inherit; padding: 8px 12px; border-radius: 8px; border: 1px solid #4a4256; background: #221d2b; color: #eee; cursor: pointer; }
+      button.primary { background: #6b1420; border-color: #a3283a; }
+      button:disabled { opacity: 0.45; cursor: default; }
+      input[type=file] { display: none; }
+      .stats { font-variant-numeric: tabular-nums; color: #cfc6da; }
+      .verdict { font-size: 26px; font-weight: 700; margin: 6px 0; }
+      .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(72px, 1fr)); gap: 6px; }
+      .grid figure { margin: 0; position: relative; }
+      .grid img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 6px; border: 2px solid transparent; display: block; }
+      .grid figure.outlier img { border-color: var(--bad); }
+      .grid figcaption { font-size: 11px; text-align: center; color: #aaa; }
+      .grid button { position: absolute; top: 2px; right: 2px; padding: 0 6px; font-size: 12px; }
+      .note { font-size: 13px; color: #a79fb3; border-left: 3px solid #6b1420; padding-left: 10px; }
+      code { background: #221d2b; padding: 1px 5px; border-radius: 4px; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Enroll the wearer’s face</h1>
+      <p class="lead">The costume only appears on the face saved here. Runs locally in this browser, nothing is uploaded.</p>
+      <div class="cols">
+        <section>
+          <div class="cam">
+            <video id="video" playsinline muted></video>
+            <canvas id="overlay"></canvas>
+            <div class="say" id="say">Loading face models…</div>
+          </div>
+          <div class="row">
+            <button id="start" disabled>Start camera</button>
+            <button id="capture" class="primary" disabled>Auto-capture</button>
+            <button id="verify" disabled>Verify: off</button>
+            <label class="btn" id="photosBtn">Add photos<input id="photos" type="file" accept="image/*" multiple /></label>
+          </div>
+          <p class="verdict" id="verdict"></p>
+          <p class="stats" id="verifyStats"></p>
+        </section>
+        <section>
+          <p class="stats" id="stats">No samples yet.</p>
+          <div class="grid" id="grid"></div>
+          <div class="row">
+            <button id="download" class="primary" disabled>Download wearer.json</button>
+            <label class="btn">Load wearer.json<input id="load" type="file" accept="application/json,.json" /></label>
+            <button id="clear" disabled>Clear</button>
+          </div>
+          <p class="note">
+            Save the file as <code>public/face/wearer.json</code>, then build and deploy.
+            Enroll with the <b>same face you’ll have at the party</b> (makeup, mask, glasses): the matcher
+            only knows what it saw here. Include a few samples in the party lighting if you can.
+          </p>
+          <p class="note">
+            <code>wearer.json</code> holds face <i>descriptors</i> (128 numbers per sample), not photos, but it is
+            public once deployed and could be used to recognize you in other photos. Delete it after Halloween.
+          </p>
+        </section>
+      </div>
+    </main>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

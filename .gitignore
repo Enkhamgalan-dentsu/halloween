@@ -6,6 +6,7 @@ dist/
 # Large / generated runtime assets (re-create with `npm run assets`)
 public/mediapipe/wasm/
 public/models/*.task
+public/models/face/
 
 # Blender backups and raw test footage
 *.blend1

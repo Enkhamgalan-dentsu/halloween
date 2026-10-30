@@ -32,22 +32,27 @@ export const DEFAULT_LOCK: LockOptions = {
 };
 
 /**
- * Who is the wearer? Nobody — until the printed QR marker is seen on someone's torso
- * (`markerOn`). From then on that person is followed frame to frame (torso position), with
- * the clothing fingerprint breaking ties when people overlap. If they leave the frame the
- * costume disappears; it comes back on the marker, or on a confident fingerprint match.
+ * Who is the wearer? Nobody — until their FACE is recognized (`confirm`, identity/). From
+ * then on that person is followed frame to frame (torso position), with the clothing
+ * fingerprint breaking ties when people overlap and keeping the lock while their back is
+ * turned (no face). A confident "not the wearer" face check releases the lock (`reject`).
+ * If they leave the frame the costume disappears; it comes back on a face match, or on a
+ * confident fingerprint match.
  * Pure logic — pixels are sampled by the caller (`appearance(i)` is only called when needed).
  */
 export class WearerLock {
   state: LockState = 'searching';
   /** Last similarity computed (debug HUD). */
   lastSimilarity: number | null = null;
-  lastMarkerMs = -Infinity;
+  /** When the wearer's face last matched. */
+  lastConfirmMs = -Infinity;
   private readonly opts: LockOptions;
   private last: { x: number; y: number } | null = null;
   private lastSeenMs = -Infinity;
   private signature: Float32Array | null = null;
   private mismatches = 0;
+  /** After a rejection, fingerprint-only re-locks are blocked for a while. */
+  private noReacquireUntil = -Infinity;
 
   constructor(opts: Partial<LockOptions> = {}) {
     this.opts = { ...DEFAULT_LOCK, ...opts };
@@ -93,8 +98,8 @@ export class WearerLock {
       return -1;
     }
 
-    // Searching: only a confident fingerprint match may bring the costume back without a marker.
-    if (this.signature && frames.length > 0) {
+    // Searching: only a confident fingerprint match may bring the costume back without a face.
+    if (this.signature && frames.length > 0 && nowMs >= this.noReacquireUntil) {
       const scored = frames
         .map((_, i) => ({ i, s: this.score(i, appearance) }))
         .filter((x) => x.s !== null && boxes[x.i]) as Array<{ i: number; s: number }>;
@@ -111,18 +116,23 @@ export class WearerLock {
     return -1;
   }
 
+  /** Torso centre of the current wearer (normalized), if locked. */
+  get position(): { x: number; y: number } | null {
+    return this.state === 'locked' ? this.last : null;
+  }
+
   /**
-   * The marker was found on candidate `i`'s torso: that's the wearer (switches if it was
-   * someone else). Returns true if the wearer changed (caller resets smoothing).
+   * Candidate `i`'s face matched the wearer: lock onto them (switches if it was someone
+   * else). Returns true if the wearer changed (caller resets smoothing).
    */
-  markerOn(i: number, frames: readonly PoseFrame[], nowMs: number, signature: Float32Array | null): boolean {
+  confirm(i: number, frames: readonly PoseFrame[], nowMs: number, signature: Float32Array | null): boolean {
     const box = frames[i] ? torsoBox(frames[i]!.image) : null;
     if (!box) return false;
     const changed =
       this.state !== 'locked' || !this.last || Math.hypot(box.cx - this.last.x, box.cy - this.last.y) > this.opts.gate;
     this.state = 'locked';
     this.seen(box, nowMs);
-    this.lastMarkerMs = nowMs;
+    this.lastConfirmMs = nowMs;
     this.mismatches = 0;
     if (signature) {
       if (!this.signature || changed) this.signature = signature.slice();
@@ -131,12 +141,23 @@ export class WearerLock {
     return changed;
   }
 
+  /**
+   * The person we're locked on is confidently NOT the wearer (face check): drop them, and
+   * don't let the clothing fingerprint grab anyone for `holdMs` (a lookalike outfit).
+   */
+  reject(nowMs: number, holdMs = 3000): void {
+    this.state = 'searching';
+    this.mismatches = 0;
+    this.noReacquireUntil = nowMs + holdMs;
+  }
+
   /** Forget everything (e.g. ?lock toggled, tests). */
   reset(): void {
     this.state = 'searching';
     this.last = null;
     this.signature = null;
-    this.lastMarkerMs = -Infinity;
+    this.lastConfirmMs = -Infinity;
+    this.noReacquireUntil = -Infinity;
   }
 
   private seen(box: { cx: number; cy: number }, nowMs: number): void {

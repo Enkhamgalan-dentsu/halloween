@@ -9,7 +9,12 @@ import { MediaPipePoseTracker } from './tracking/mediapipe-pose.ts';
 import { PoseSmoother } from './tracking/smoothing.ts';
 import { WearerSelector } from './tracking/select.ts';
 import { WearerLock } from './tracking/wearer-lock.ts';
-import { MarkerScanner } from './markers/qr.ts';
+import { PersonSampler } from './tracking/sampler.ts';
+import { FaceEngine } from './identity/face-engine.ts';
+import { FaceChecker } from './identity/face-check.ts';
+import { FaceLock } from './identity/face-lock.ts';
+import { parseEnrollment } from './identity/matcher.ts';
+import type { Enrollment } from './identity/matcher.ts';
 import type { PoseFrame } from './tracking/pose.ts';
 import { FacingEstimator } from './rig/facing.ts';
 import { RootPlacer } from './rig/placement.ts';
@@ -20,6 +25,7 @@ import { SuitFollower } from './rig/follow.ts';
 import { PROFILES } from './rig/profiles.ts';
 import type { SuitProfile } from './rig/profiles.ts';
 import { Loader } from './ui/loader.ts';
+import { Haunt } from './ui/haunt.ts';
 import { coverMapping } from './util/viewport.ts';
 import { Ema, RateCounter } from './util/rate.ts';
 
@@ -27,10 +33,8 @@ import { Ema, RateCounter } from './util/rate.ts';
 const LOST_AFTER_MS = 500;
 /** Nobody seen for this long → show the "point at the costume" hint. */
 const HINT_AFTER_MS = 2000;
-/** Marker search cadence: fast while nobody is locked, slow re-checks once locked. */
-const SCAN_SEARCHING_MS = 120; // one person per scan (~10 ms each), round-robin
-const SCAN_LOCKED_MS = 800;
-const SCAN_OTHERS_MS = 1600;
+/** The wearer's enrolled face (made with tools/enroll/, see README). */
+const ENROLLMENT_URL = `${import.meta.env.BASE_URL}face/wearer.json`;
 /** Rough download sizes for the combined progress bar when a size is unknown. */
 const SUIT_BYTES_GUESS = 3.2e6;
 
@@ -65,10 +69,13 @@ let trackerMB = 0;
 let trackerFraction = 0;
 let suitLoaded = 0;
 let suitTotal = SUIT_BYTES_GUESS;
+// Face models (~7 MB, no byte progress from face-api): counted when they're ready.
+const FACE_MB = cfg.lock ? 7 : 0;
+let faceDoneMB = 0;
 const reportProgress = () => {
   const trackerTotalMB = trackerFraction > 0 ? trackerMB / trackerFraction : 19.3;
-  const loadedMB = trackerMB + suitLoaded / 1e6;
-  loader.setProgress(loadedMB / (trackerTotalMB + suitTotal / 1e6));
+  const loadedMB = trackerMB + suitLoaded / 1e6 + faceDoneMB;
+  loader.setProgress(loadedMB / (trackerTotalMB + suitTotal / 1e6 + FACE_MB));
 };
 const tracker = new MediaPipePoseTracker({
   model: cfg.poseModel,
@@ -81,6 +88,29 @@ const tracker = new MediaPipePoseTracker({
 });
 const trackerReady = tracker.init();
 trackerReady.catch(() => {});
+// Face recognition (Phase 4): only if the wearer has enrolled; ?lock=0 skips it.
+type Identity = { enrollment: Enrollment; engine: FaceEngine } | { error: string };
+const identityReady: Promise<Identity> = cfg.lock ? loadIdentity() : Promise.resolve({ error: 'off (?lock=0)' });
+void identityReady.then(() => {
+  faceDoneMB = FACE_MB;
+  reportProgress();
+});
+async function loadIdentity(): Promise<Identity> {
+  let enrollment: Enrollment | null = null;
+  try {
+    const res = await fetch(ENROLLMENT_URL, { cache: 'no-cache' });
+    if (res.ok) enrollment = parseEnrollment(await res.json());
+  } catch {
+    /* not deployed / bad JSON */
+  }
+  if (!enrollment) return { error: 'not enrolled (no face/wearer.json)' };
+  try {
+    return { enrollment, engine: await FaceEngine.load() };
+  } catch (err) {
+    console.error('[face] engine failed to load', err);
+    return { error: 'face engine failed' };
+  }
+}
 const suitReady = Suit.load(profile, (loaded, total) => {
   suitLoaded = loaded;
   if (total > 0) suitTotal = total;
@@ -90,14 +120,12 @@ suitReady.catch(() => {});
 
 // ---- tracking state (written by the video-frame loop, read by the render loop) ----
 const smoother = new PoseSmoother(cfg.smoothing);
-const selector = new WearerSelector(); // ?lock=0 only: most central person
-// Default: the costume goes ONLY on the person wearing the QR marker (Phase 4).
+const selector = new WearerSelector(); // fallback (not enrolled / ?lock=0): most central person
+// Default: the costume goes ONLY on the enrolled wearer's face (Phase 4).
 const lock = new WearerLock();
-const scanner = cfg.lock ? new MarkerScanner() : null;
-let lastScanMs = -Infinity;
-let lastOthersScanMs = -Infinity;
-let scanCursor = 0;
-const recentMarkers: Array<{ x: number; y: number; t: number }> = [];
+const sampler = new PersonSampler();
+let faceLock: FaceLock | null = null;
+let identityNote = 'loading';
 let wearer: PoseFrame | null = null; // smoothed; same object every frame
 let others: PoseFrame[] = [];
 let lastSeenMs = -Infinity;
@@ -130,7 +158,7 @@ function onVideoFrame(nowMs: number): void {
   detectMs.push(performance.now() - t0);
   poseRate.tick(nowMs);
 
-  const i = scanner ? pickWearer(frames, nowMs, scanner) : selector.select(frames);
+  const i = faceLock ? pickWearer(frames, nowMs, faceLock) : selector.select(frames);
   const picked = i >= 0 ? frames[i] : undefined;
   if (picked) {
     wearer = smoother.apply(picked);
@@ -147,61 +175,46 @@ function onVideoFrame(nowMs: number): void {
     }
   }
 
-  if (scanner && lock.state === 'searching') rig?.suit.hide(); // never linger on someone else
+  if (faceLock && lock.state === 'searching') rig?.suit.hide(); // never linger on someone else
   if (rig && wearer && picked) driveSuit(rig, wearer, nowMs);
 
   const sinceSeen = nowMs - Math.max(lastSeenMs, trackingStartedMs);
   showPill(
     sinceSeen <= HINT_AFTER_MS
       ? null
-      : scanner && frames.length > 0
-        ? 'Point your camera at the QR code on the costume'
+      : faceLock && frames.length > 0
+        ? 'Point the camera at the wearer’s face'
         : 'Point your camera at the costume',
   );
 }
 
 /**
- * Which detected person is the wearer? Follows the lock (marker + continuity + clothing
- * fingerprint); scans torsos for the QR marker on a schedule. Returns −1 for nobody.
+ * Which detected person is the wearer? Follows the lock (continuity + clothing
+ * fingerprint) and lets the face checks confirm / reject it. Returns −1 for nobody.
  */
-function pickWearer(frames: PoseFrame[], nowMs: number, sc: MarkerScanner): number {
+function pickWearer(frames: PoseFrame[], nowMs: number, faces: FaceLock): number {
   const prints = new Map<number, Float32Array | null>();
   const appearance = (k: number) => {
-    if (!prints.has(k)) prints.set(k, frames[k] ? sc.fingerprint(video, frames[k]) : null);
+    if (!prints.has(k)) prints.set(k, frames[k] ? sampler.fingerprint(video, frames[k]) : null);
     return prints.get(k) ?? null;
   };
-  let i = lock.update(frames, nowMs, appearance);
+  const i = lock.update(frames, nowMs, appearance);
+  faces.tick(frames, i, nowMs);
+  return i;
+}
 
-  const searching = i < 0;
-  if (frames.length === 0 || nowMs - lastScanMs < (searching ? SCAN_SEARCHING_MS : SCAN_LOCKED_MS)) return i;
-  lastScanMs = nowMs;
-  // One torso per scan keeps each frame cheap: searching cycles through everyone; locked
-  // re-checks the wearer, and now and then someone else (in case they're the real wearer).
-  let order: number[];
-  if (searching) {
-    order = [scanCursor++ % frames.length];
-  } else if (frames.length > 1 && nowMs - lastOthersScanMs > SCAN_OTHERS_MS) {
-    lastOthersScanMs = nowMs;
-    const others = frames.map((_, k) => k).filter((k) => k !== i);
-    order = [others[scanCursor++ % others.length]!];
-  } else {
-    order = [i];
-  }
-  for (const k of order) {
-    const found = sc.scan(video, frames[k]!, (side) => rig?.facing.override(side));
-    if (!found) continue;
-    recentMarkers.push({ x: found.x, y: found.y, t: nowMs });
-    if (recentMarkers.length > 8) recentMarkers.shift();
-    if (lock.markerOn(k, frames, nowMs, appearance(k))) {
+function makeFaceLock(enrollment: Enrollment, engine: FaceEngine): FaceLock {
+  return new FaceLock(new FaceChecker(engine, enrollment, sampler), lock, video, {
+    fingerprint: (frame) => sampler.fingerprint(video, frame),
+    onWearerChanged: () => {
       // A different person: don't smooth/glide from the previous body.
       smoother.reset();
       rig?.placer.reset();
       rig?.follower.snap();
-    }
-    i = k;
-    break;
-  }
-  return i;
+    },
+    onRejected: () => rig?.suit.hide(),
+    now: () => performance.now(),
+  });
 }
 
 /** Landmarks → suit pose target. Runs once per camera frame. */
@@ -295,14 +308,23 @@ async function boot(): Promise<void> {
 
   let suit: Suit;
   let cameraInfo: CameraInfo | null;
+  let identity: Identity;
   try {
-    [, suit, cameraInfo] = await Promise.all([trackerReady, suitReady, cameraReady]);
+    [, suit, cameraInfo, identity] = await Promise.all([trackerReady, suitReady, cameraReady, identityReady]);
   } catch (err) {
     console.error(err);
     loader.showError('The spirits could not be summoned. Check your connection and reload.', 'Reload', () =>
       window.location.reload(),
     );
     return;
+  }
+
+  if ('engine' in identity) {
+    faceLock = makeFaceLock(identity.enrollment, identity.engine);
+    identityNote = `${identity.enrollment.descriptors.length} faces · ${identity.engine.backend}`;
+  } else {
+    identityNote = identity.error; // fallback: the most central person wears the suit
+    if (cfg.lock) console.warn(`[face] ${identity.error} — costume goes on the most central person`);
   }
 
   const mirrored = cfg.facing === 'user' && !cfg.videoSrc;
@@ -332,9 +354,11 @@ async function boot(): Promise<void> {
   const hud = cfg.debug
     ? new DebugHud(() => ({
         suit: `${profile.id} (${rig?.suit.visible ? 'shown' : 'hidden'})`,
-        lock: scanner
-          ? `${lock.state}${lock.lastMarkerMs > -Infinity ? ` · QR ${((performance.now() - lock.lastMarkerMs) / 1000).toFixed(1)}s ago` : ' · no QR yet'}${scanner.canDecode ? ' · decode' : ''}`
-          : 'off (?lock=0)',
+        lock: faceLock ? `${lock.state}${faceLock.lastMatchMs > -Infinity ? ` · me ${((performance.now() - faceLock.lastMatchMs) / 1000).toFixed(1)}s ago` : ' · not seen yet'}` : 'central person',
+        face: faceLock?.last
+          ? `${faceLock.last.verdict}${faceLock.last.distance !== null ? ` ${faceLock.last.distance.toFixed(2)}` : ''} (#${faceLock.checks})`
+          : identityNote,
+        id: identityNote,
         match: lock.lastSimilarity !== null ? lock.lastSimilarity.toFixed(2) : '—',
         pose: `${poseRate.hz.toFixed(1)} Hz`,
         detect: `${detectMs.value.toFixed(1)} ms`,
@@ -369,13 +393,16 @@ async function boot(): Promise<void> {
     if (skeleton && video.videoWidth > 0) {
       const mapping = coverMapping(video.videoWidth, video.videoHeight, window.innerWidth, window.innerHeight, mirrored);
       const now = performance.now();
-      skeleton.draw(wearer, others, mapping, recentMarkers.map((m) => ({ x: m.x, y: m.y, ageMs: now - m.t })));
+      const marks = faceLock?.marks ?? [];
+      skeleton.draw(wearer, others, mapping, marks.map((m) => ({ x: m.x, y: m.y, verdict: m.verdict, ageMs: now - m.t })));
     }
     hud?.tick(time);
   });
 
+  const haunt = new Haunt();
   startTrackingLoop();
   await loader.finish();
+  haunt.show();
   arCredit.hidden = false;
   if (cfg.debug) console.info('[haunted-suit]', { config: cfg, suit: profile.id, backend: tracker.delegate });
 }

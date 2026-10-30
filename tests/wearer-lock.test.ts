@@ -29,18 +29,18 @@ test('appearance: same person matches, different clothes do not', () => {
   assert.ok(similarity(ME, OTHER) < 0.75);
 });
 
-test('nobody wears the costume until the marker is seen', () => {
+test('nobody wears the costume until the face is recognized', () => {
   const lock = new WearerLock();
   const frames = [fakePose(0.5, 0.5, 0.25, 0.35), fakePose(0.3, 0.5)];
   assert.equal(lock.update(frames, 0, () => ME), -1, 'biggest, most central person is NOT picked');
   assert.equal(lock.state, 'searching');
-  lock.markerOn(1, frames, 10, ME);
+  lock.confirm(1, frames, 10, ME);
   assert.equal(lock.update(frames, 33, (i) => (i === 1 ? ME : OTHER)), 1);
 });
 
 test('locked: a bigger person walking past does not steal it', () => {
   const lock = new WearerLock();
-  lock.markerOn(0, [fakePose(0.5, 0.5)], 0, ME);
+  lock.confirm(0, [fakePose(0.5, 0.5)], 0, ME);
   let t = 0;
   for (let k = 0; k < 20; k++) {
     t += 33;
@@ -53,7 +53,7 @@ test('locked: a bigger person walking past does not steal it', () => {
 
 test('wearer leaves the frame → costume hidden, other people never get it', () => {
   const lock = new WearerLock();
-  lock.markerOn(0, [fakePose(0.5, 0.5)], 0, ME);
+  lock.confirm(0, [fakePose(0.5, 0.5)], 0, ME);
   // I walk out; someone in different clothes steps into my spot. A couple of frames of
   // tolerance (blur/lighting), then they are rejected for good.
   let frame = 0;
@@ -64,26 +64,46 @@ test('wearer leaves the frame → costume hidden, other people never get it', ()
   assert.equal(lock.state, 'searching');
 });
 
-test('wearer comes back (no marker visible) → recognized by clothing, others ignored', () => {
+test('wearer comes back (face not visible) → recognized by clothing, others ignored', () => {
   const lock = new WearerLock();
-  lock.markerOn(0, [fakePose(0.5, 0.5)], 0, ME);
+  lock.confirm(0, [fakePose(0.5, 0.5)], 0, ME);
   for (let t = 33; t < 1500; t += 33) lock.update([], t, () => null);
   assert.equal(lock.state, 'searching');
   const idx = lock.update([fakePose(0.3, 0.5), fakePose(0.7, 0.5)], 1600, (i) => (i === 0 ? OTHER : person([24, 22, 25], [118, 33, 31], 22, 4)));
   assert.equal(idx, 1);
 });
 
-test('marker seen on someone else → switches to them (the real wearer)', () => {
+test('face matched on someone else → switches to them (the real wearer)', () => {
   const lock = new WearerLock();
   const frames = [fakePose(0.3, 0.5), fakePose(0.7, 0.5)];
-  lock.markerOn(0, frames, 0, OTHER);
-  assert.equal(lock.markerOn(1, frames, 500, ME), true);
+  lock.confirm(0, frames, 0, OTHER);
+  assert.equal(lock.confirm(1, frames, 500, ME), true);
   assert.equal(lock.update(frames, 533, (i) => (i === 1 ? ME : OTHER)), 1);
 });
 
 test('two people overlapping: the fingerprint decides', () => {
   const lock = new WearerLock();
-  lock.markerOn(0, [fakePose(0.5, 0.5)], 0, ME);
+  lock.confirm(0, [fakePose(0.5, 0.5)], 0, ME);
   const idx = lock.update([fakePose(0.52, 0.5), fakePose(0.48, 0.5)], 33, (i) => (i === 0 ? OTHER : ME));
   assert.equal(idx, 1);
+});
+
+test('face check says "not the wearer" → released, and clothing alone cannot re-grab for a while', () => {
+  const lock = new WearerLock();
+  const frames = [fakePose(0.5, 0.5)];
+  lock.confirm(0, frames, 0, ME);
+  assert.equal(lock.update(frames, 33, () => ME), 0);
+  lock.reject(40);
+  // Same clothes (lookalike outfit) but the face said no: blocked during the hold…
+  assert.equal(lock.update(frames, 1000, () => ME), -1);
+  assert.equal(lock.state, 'searching');
+  // …after the hold, a confident clothing match may bring it back (wearer turned away).
+  assert.equal(lock.update(frames, 3200, () => ME), 0);
+});
+
+test('position is only exposed while locked', () => {
+  const lock = new WearerLock();
+  assert.equal(lock.position, null);
+  lock.confirm(0, [fakePose(0.4, 0.6)], 0, ME);
+  assert.ok(lock.position && Math.abs(lock.position.x - 0.4) < 1e-9);
 });

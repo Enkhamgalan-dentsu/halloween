@@ -5,22 +5,24 @@ then `docs/PLAN.md` for the phase you are working on.
 
 ## What this is
 
-The wearer has a printed QR marker on their **chest** and **back**. A guest scans it with
-their phone camera → the URL opens this web app → the app uses the **rear camera**,
-tracks the wearer's body, and renders a **rigged 3D Halloween suit** over them that
-follows their movement in real time.
+A guest scans **one QR code** (`assets/qr/`, opens https://halloween-ruby.vercel.app) with
+their phone camera → the app uses the **rear camera**, tracks the wearer's body,
+**recognizes the wearer's face**, and renders a **rigged 3D Halloween suit** over them only,
+following their movement in real time. A spooky frame (fog, vignette, drips) edges the view.
 
 Fixed context: **indoor** party, **full‑body** suit, production URL **https://halloween-ruby.vercel.app**
-(Vercel project `halloween-ruby`; the printed QR markers point here, so the project name must never change). There are **two costumes**, picked at random
+(Vercel project `halloween-ruby`; the printed QR points here, so the project name must never change). There are **two costumes**, picked at random
 (50/50) on every load, `?suit=mermaid|bonnie` to force one:
 - **Creepy Mermaid** (`public/suits/mermaid.glb`, seenoise, CC BY 4.0) — rigged by us,
   identity rest rotations, **tail instead of legs** (the wearer's legs drive the tail).
 - **Reanimated Melted Chocolate Bonnie** (`public/suits/bonnie.glb`, OrangeSauceu,
   CC BY 4.0) — came rigged (FBX T-pose, non-identity rest rotations), legs drive legs.
 Both credits are shown (loading screen + small AR corner). Details: `docs/SUIT.md`.
-The costume appears **only on the person wearing the printed QR marker** (wearer lock:
-marker → then body continuity + clothing fingerprint; `?lock=0` disables). Markers to print:
-`assets/markers/` (A3 recommended).
+The costume appears **only on the enrolled wearer** (face lock: the face is recognized
+once → then followed by body continuity + clothing fingerprint, so it survives turning
+around; periodic face re-checks can release it). Enrollment: `npm run dev` →
+`/tools/enroll/` → save `public/face/wearer.json`. No `wearer.json` (or `?lock=0`) → the
+most central person gets the suit. The QR to print: `assets/qr/halloween-qr-A4.pdf`.
 The app starts by itself (no tap): scary loading screen (`src/ui/loader.ts`, image
 `public/loading.jpg`) while camera + tracker + suit load in parallel.
 
@@ -35,7 +37,8 @@ robust over clever. A stable, slightly‑less‑fancy suit beats a jittery fancy
 | Rendering | three.js (`WebGLRenderer`, transparent canvas over `<video>`) |
 | Body tracking | MediaPipe Tasks Vision — `PoseLandmarker` (33 landmarks, image + world) |
 | Suit asset | `tools/build-suit/` → `public/suits/mermaid.glb` (Mixamo-named humanoid bones + tail chain) |
-| Marker | Standard QR code (opens URL; also detected in‑frame for front/back) |
+| Wearer identity | `@vladmandic/face-api` (tfjs WebGL): tiny face detector + tiny landmarks + 128‑d descriptor, lazy‑loaded, models self‑hosted in `public/models/face/` |
+| QR | One plain QR code → the site URL (only the entry point; not detected in‑frame) |
 | Hosting | Vercel, `halloween-ruby.vercel.app`, config in `vercel.json` (`netlify.toml` kept as a mirror) |
 
 No backend. No accounts. No analytics. No third‑party CDNs at runtime — the wasm and
@@ -62,7 +65,7 @@ self‑signed certificate warning once.
 index.html            start screen, <video id="camera">, <canvas id="overlay">
 src/
   main.ts             boot + frame loop (camera → pose → rig → render)
-  config.ts           URL → config: /F | /B marker paths, ?cam=front, ?debug, ?video=, ?model=
+  config.ts           URL → config: ?cam=front, ?debug, ?video=, ?model=, ?suit=, ?lock=0 (legacy /F /B paths still accepted)
   camera.ts           getUserMedia + recorded-clip source, friendly errors
   scene.ts            three.js overlay scene/camera/renderer
   debug/hud.ts        ?debug overlay (FPS, video/screen size)
@@ -71,12 +74,16 @@ src/
   tracking/mediapipe-pose.ts  MediaPipe PoseLandmarker (download progress, GPU→CPU fallback)
   tracking/filters.ts One Euro filter
   tracking/smoothing.ts  PoseSmoother: One Euro on all landmarks (?mc= ?beta=)
-  tracking/select.ts  torsoBox() + WearerSelector (only used with ?lock=0)
-  tracking/wearer-lock.ts  WearerLock: marker-locked wearer, continuity, re-identification
+  tracking/select.ts  torsoBox() + WearerSelector (fallback: not enrolled / ?lock=0)
+  tracking/wearer-lock.ts  WearerLock: face-confirmed wearer, continuity, re-identification
   tracking/appearance.ts   clothing colour fingerprint (hue/grey histograms, top/bottom)
-  markers/finder.ts   QR finder-pattern detector (no decode; works on iOS)
-  markers/qr.ts       MarkerScanner: torso crops, marker search, fingerprint, Android decode
-  markers/marker-grids.ts  module grids of the printed markers (tests render them)
+  tracking/sampler.ts PersonSampler: torso fingerprint + head crops from the video
+  identity/head.ts    head crop from BODY landmarks (no full-frame face detection)
+  identity/matcher.ts wearer.json parsing, distances, match/unsure/other thresholds (pure)
+  identity/face-engine.ts  face-api loader (dynamic import, WebGL, warm-up), describe()
+  identity/face-check.ts   FaceChecker: crop a person's head → descriptor → verdict
+  identity/face-lock.ts    when/whom to face-check; feeds verdicts into WearerLock
+  ui/haunt.ts         spooky camera edges (fog, vignette, drips, grain, flicker; CSS only)
   debug/skeleton.ts   ?debug 2D skeleton overlay
   util/fetch-bytes.ts fetch with progress
   util/rate.ts        RateCounter (Hz), Ema
@@ -85,16 +92,16 @@ src/
   rig/landmarks.ts    the ONE MediaPipe → three.js axis conversion, L/R swap, trust()
   rig/solver.ts       landmarks → per-bone rotation DELTAS from rest (any rig)
   rig/placement.ts    depth / scale / position of the suit root
-  rig/facing.ts       front/back estimate (marker side + face visibility)
+  rig/facing.ts       front/back estimate (face visibility with hysteresis)
   rig/suit.ts         GLB loading; applies deltas through the real hierarchy + rest rotations
   ui/loader.ts        auto-start scary loading screen (static, glitches, whispers, progress)
   rig/follow.ts       ghost-like easing: spring root, per-bone lag (tail trails), hover bob
-  markers/qr.ts       in-frame marker detection                     (Phase 4)
-public/               served as-is: models/*.task, mediapipe/wasm/, suits/mermaid.glb
-assets/               source files, NOT served: creepy_mermaid.glb (32 MB sculpt), markers/, recordings/
-scripts/              node scripts (asset fetching, marker generation)
+public/               served as-is: models/*.task, models/face/, mediapipe/wasm/, suits/*.glb, face/wearer.json
+assets/               source files, NOT served: creepy_mermaid.glb (32 MB sculpt), qr/, recordings/
+scripts/              node scripts (asset fetching: MediaPipe wasm/models, face models)
 tools/build-suit/     browser pipeline: source sculpt → rigged suit GLB (see docs/SUIT.md)
 tools/pose-lab/       dev page: synthetic poses → real solver + suit (no camera needed)
+tools/enroll/         dev page: capture the wearer's face → wearer.json; live verify
 tests/                unit tests for pure modules (npm test)
 docs/PLAN.md          the project plan — phases, decisions, risks
 netlify.toml          SPA rewrites for /F and /B, cache headers (vercel.json mirrors it)
@@ -112,7 +119,7 @@ netlify.toml          SPA rewrites for /F and /B, cache headers (vercel.json mir
   mirrored) the person's left appears on the right of the image. The selfie camera
   (`?cam=front`) is mirrored in CSS and in `coverMapping(..., mirrored=true)`.
 - **Back view**: when the wearer faces away, MediaPipe can swap left/right. Facing is
-  decided by the marker side (`/B` path / in‑frame QR) first, nose/ear visibility second.
+  decided by nose/eye/ear visibility (with hysteresis).
 
 ## Conventions
 
@@ -131,10 +138,11 @@ netlify.toml          SPA rewrites for /F and /B, cache headers (vercel.json mir
 - No per‑frame allocations in hot paths (reuse `Vector3`/`Quaternion` scratch objects).
 - three.js `q.slerpQuaternions(a, b, t)` copies `a` into `q` first — never pass `q` as `b`.
 - Never block the UI on asset loading without a visible progress/status message.
-- The printed QR payloads are exactly `HTTPS://HALLOWEEN-RUBY.VERCEL.APP/F` (chest) and
-  `HTTPS://HALLOWEEN-RUBY.VERCEL.APP/B` (back) — uppercase so they encode in QR alphanumeric mode.
-  `/F`, `/B` must keep working forever (config.ts + netlify.toml). Changing them after
-  printing breaks the costume.
+- The printed QR payload is exactly `https://halloween-ruby.vercel.app` (`assets/qr/`).
+  The old `/F`, `/B` paths still load the app (vercel.json rewrites) — keep them working.
+- Face checks run on a ~160 px head crop, one person at a time, async (never block the
+  pose loop). `wearer.json` is PUBLIC once deployed (face descriptors, not photos) — remove
+  it after the party.
 - Commit messages: imperative, scoped, e.g. `rig: solve forearm twist from wrist landmarks`.
 
 ## Performance budgets (mid‑range phone, ~2022)
@@ -189,8 +197,9 @@ Use the **lite** pose model by default; `?model=full` exists for comparison only
 - **Do** read `docs/PLAN.md` and update its checklist when you finish a phase item.
 - **Do** degrade gracefully: low confidence → fade the suit, never show a twisted rig.
 - **Don't** add a framework (React etc.), a backend, or a CDN dependency.
-- **Don't** commit `node_modules/`, `public/mediapipe/wasm/`, `public/models/*.task`, or raw recordings.
-- **Don't** change the marker URL format without updating the printed markers.
+- **Don't** commit `node_modules/`, `public/mediapipe/wasm/`, `public/models/*.task`, `public/models/face/`, or raw recordings.
+- **Don't** change the QR URL without reprinting the QR.
+- **Don't** commit photos of faces; only `public/face/wearer.json` (descriptors).
 - **Don't** hand-edit `public/suits/*.glb`; change `tools/build-suit/` and rebuild.
 - **Don't** remove the CC BY credits for the models (`profile.credit`, shown by main.ts).
 - **Don't** assume identity rest rotations anywhere: the solver outputs deltas from rest and

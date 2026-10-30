@@ -1,7 +1,7 @@
-// Copies the MediaPipe wasm runtime and downloads the pose models into public/
+// Copies the MediaPipe wasm runtime + face-recognition models and downloads the pose models into public/
 // so the app self-hosts everything (no third-party CDN at the party).
 // Usage: npm run assets   (after `npm install`)
-import { access, cp, mkdir, writeFile } from 'node:fs/promises';
+import { access, cp, mkdir, readdir, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -9,6 +9,10 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const wasmSrc = join(root, 'node_modules', '@mediapipe', 'tasks-vision', 'wasm');
 const wasmDst = join(root, 'public', 'mediapipe', 'wasm');
 const modelDir = join(root, 'public', 'models');
+const faceSrc = join(root, 'node_modules', '@vladmandic', 'face-api', 'model');
+const faceDst = join(modelDir, 'face');
+// Face recognition (identity/face-engine.ts): tiny detector + tiny landmarks + 128-d descriptor.
+const FACE_NETS = ['tiny_face_detector_model', 'face_landmark_68_tiny_model', 'face_recognition_model'];
 
 const MODELS = {
   'pose_landmarker_lite.task':
@@ -42,3 +46,18 @@ for (const [file, url] of Object.entries(MODELS)) {
   await writeFile(dst, Buffer.from(await res.arrayBuffer()));
   console.log('✓ model  →', `public/models/${file}`);
 }
+
+if (!(await exists(faceSrc))) {
+  console.error('✗ @vladmandic/face-api is not installed. Run `npm install` first.');
+  process.exit(1);
+}
+await mkdir(faceDst, { recursive: true });
+const faceFiles = (await readdir(faceSrc)).filter((f) => FACE_NETS.some((n) => f.startsWith(`${n}.`) || f.startsWith(`${n}-`)));
+for (const n of FACE_NETS) {
+  if (!faceFiles.some((f) => f.startsWith(`${n}-weights_manifest`))) {
+    console.error(`✗ face model ${n} not found in node_modules/@vladmandic/face-api/model`);
+    process.exit(1);
+  }
+}
+for (const f of faceFiles) await cp(join(faceSrc, f), join(faceDst, f));
+console.log('✓ face   →', `public/models/face (${faceFiles.length} files)`);

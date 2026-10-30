@@ -2,13 +2,13 @@
   "name": "halloween-ar-suit",
   "private": true,
   "version": "0.1.0",
-  "description": "WebAR Halloween costume: scan the chest/back marker, see the wearer in a rigged 3D suit.",
+  "description": "WebAR Halloween costume: scan the QR, see the wearer (recognized by face) in a rigged 3D suit.",
   "type": "module",
   "engines": {
     "node": ">=20"
   },
   "scripts": {
-    "setup": "npm install three @mediapipe/tasks-vision && npm install -D vite typescript @types/three @vitejs/plugin-basic-ssl && npm run assets",
+    "setup": "npm install three @mediapipe/tasks-vision @vladmandic/face-api && npm install -D vite typescript @types/three @vitejs/plugin-basic-ssl && npm run assets",
     "assets": "node scripts/fetch-assets.mjs",
     "dev": "vite",
     "prebuild": "node scripts/fetch-assets.mjs",
@@ -20,6 +20,7 @@
   "homepage": "https://halloween-ruby.vercel.app",
   "dependencies": {
     "@mediapipe/tasks-vision": "^1.1.1",
+    "@vladmandic/face-api": "^1.7.15",
     "three": "^0.186.1"
   },
   "devDependencies": {
