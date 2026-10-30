@@ -79,8 +79,6 @@ export class MediaPipePoseTracker implements PoseTracker {
 
   private async load(): Promise<void> {
     const { model, onProgress } = this.opts;
-    const fileset = await FilesetResolver.forVisionTasks(`${BASE}mediapipe/wasm`);
-
     const parts = {
       wasm: { loaded: 0, total: APPROX_BYTES.wasm },
       model: { loaded: 0, total: APPROX_BYTES[model] },
@@ -96,10 +94,11 @@ export class MediaPipePoseTracker implements PoseTracker {
       report();
     };
 
-    const [wasmBytes, modelBytes] = await Promise.all([
-      fetchBytes(fileset.wasmBinaryPath, track(parts.wasm)),
-      fetchBytes(`${BASE}models/pose_landmarker_${model}.task`, track(parts.model)),
-    ]);
+    // The model doesn't depend on the wasm variant: don't wait for the SIMD probe.
+    const modelReady = fetchBytes(`${BASE}models/pose_landmarker_${model}.task`, track(parts.model));
+    modelReady.catch(() => {});
+    const fileset = await FilesetResolver.forVisionTasks(`${BASE}mediapipe/wasm`);
+    const [wasmBytes, modelBytes] = await Promise.all([fetchBytes(fileset.wasmBinaryPath, track(parts.wasm)), modelReady]);
     onProgress?.({ fraction: 1, loadedMB: (wasmBytes.byteLength + modelBytes.byteLength) / 1e6 });
 
     const wasmUrl = URL.createObjectURL(new Blob([wasmBytes], { type: 'application/wasm' }));

@@ -10,7 +10,7 @@ import { PoseSmoother } from './tracking/smoothing.ts';
 import { WearerSelector } from './tracking/select.ts';
 import { WearerLock } from './tracking/wearer-lock.ts';
 import { PersonSampler } from './tracking/sampler.ts';
-import { FaceEngine } from './identity/face-engine.ts';
+import { FACE_WEIGHT_BYTES, FaceEngine, fetchFaceWeights } from './identity/face-engine.ts';
 import { FaceChecker } from './identity/face-check.ts';
 import { FaceLock } from './identity/face-lock.ts';
 import { parseEnrollment } from './identity/matcher.ts';
@@ -22,8 +22,8 @@ import { PoseSolver } from './rig/solver.ts';
 import type { SolvedPose } from './rig/solver.ts';
 import { Suit } from './rig/suit.ts';
 import { SuitFollower } from './rig/follow.ts';
-import { PROFILES } from './rig/profiles.ts';
-import type { SuitProfile } from './rig/profiles.ts';
+import { PROFILES, SUIT_IDS } from './rig/profiles.ts';
+import type { SuitId, SuitProfile } from './rig/profiles.ts';
 import { Loader } from './ui/loader.ts';
 import { Haunt } from './ui/haunt.ts';
 import { coverMapping } from './util/viewport.ts';
@@ -53,7 +53,14 @@ const showPill = (msg: string | null) => {
 };
 
 // ---- which costume: forced with ?suit=, otherwise a coin flip on every load ----
-const profile: SuitProfile = PROFILES[cfg.suit ?? (Math.random() < 0.5 ? 'mermaid' : 'bonnie')];
+// index.html already flipped the coin (so the GLB is downloading before this JS runs).
+const preloadedSuit = document.documentElement.dataset.suit;
+const profile: SuitProfile =
+  PROFILES[
+    cfg.suit ??
+      ((SUIT_IDS as readonly string[]).includes(preloadedSuit ?? '') ? (preloadedSuit as SuitId) : null) ??
+      (Math.random() < 0.5 ? 'mermaid' : 'bonnie')
+  ];
 
 const loader = new Loader();
 const c = profile.credit;
@@ -64,18 +71,21 @@ loader.setCredit(
 );
 arCredit.textContent = `“${c.title}” by ${c.author} · CC BY 4.0`;
 
-// ---- downloads start immediately: tracker (~20 MB) + the chosen suit (~3 MB) ----
+// ---- downloads (already started by index.html's preloads): tracker (~19 MB raw) +
+// the chosen suit (~3 MB) + face models (~7 MB), all in parallel ----
 let trackerMB = 0;
 let trackerFraction = 0;
 let suitLoaded = 0;
 let suitTotal = SUIT_BYTES_GUESS;
-// Face models (~7 MB, no byte progress from face-api): counted when they're ready.
-const FACE_MB = cfg.lock ? 7 : 0;
-let faceDoneMB = 0;
+const FACE_MB = cfg.lock ? FACE_WEIGHT_BYTES / 1e6 : 0;
+let faceMB = 0;
+let identitySettled = !cfg.lock;
 const reportProgress = () => {
   const trackerTotalMB = trackerFraction > 0 ? trackerMB / trackerFraction : 19.3;
-  const loadedMB = trackerMB + suitLoaded / 1e6 + faceDoneMB;
-  loader.setProgress(loadedMB / (trackerTotalMB + suitTotal / 1e6 + FACE_MB));
+  const loadedMB = trackerMB + suitLoaded / 1e6 + faceMB;
+  const fraction = loadedMB / (trackerTotalMB + suitTotal / 1e6 + FACE_MB);
+  // Downloads done ≠ ready: GPU set-up + face warm-up still follow. Hold below 100%.
+  loader.setProgress(Math.min(fraction, identitySettled ? 0.99 : 0.95));
 };
 const tracker = new MediaPipePoseTracker({
   model: cfg.poseModel,
@@ -89,27 +99,32 @@ const tracker = new MediaPipePoseTracker({
 const trackerReady = tracker.init();
 trackerReady.catch(() => {});
 // Face recognition (Phase 4): only if the wearer has enrolled; ?lock=0 skips it.
+// wearer.json, the face-api library and its weights all load at once (no chain).
 type Identity = { enrollment: Enrollment; engine: FaceEngine } | { error: string };
 const identityReady: Promise<Identity> = cfg.lock ? loadIdentity() : Promise.resolve({ error: 'off (?lock=0)' });
 void identityReady.then(() => {
-  faceDoneMB = FACE_MB;
+  identitySettled = true;
+  faceMB = FACE_MB;
   reportProgress();
 });
 async function loadIdentity(): Promise<Identity> {
-  let enrollment: Enrollment | null = null;
-  try {
-    const res = await fetch(ENROLLMENT_URL, { cache: 'no-cache' });
-    if (res.ok) enrollment = parseEnrollment(await res.json());
-  } catch {
-    /* not deployed / bad JSON */
-  }
-  if (!enrollment) return { error: 'not enrolled (no face/wearer.json)' };
-  try {
-    return { enrollment, engine: await FaceEngine.load() };
-  } catch (err) {
+  const enrollmentReady = fetch(ENROLLMENT_URL)
+    .then((res) => (res.ok ? res.json() : null))
+    .then((json: unknown) => parseEnrollment(json))
+    .catch(() => null); // not deployed / bad JSON
+  const weights = fetchFaceWeights((bytes) => {
+    faceMB = bytes / 1e6;
+    reportProgress();
+  });
+  weights.catch(() => {}); // reported via FaceEngine.load
+  const engineReady = FaceEngine.load(weights).catch((err: unknown) => {
     console.error('[face] engine failed to load', err);
-    return { error: 'face engine failed' };
-  }
+    return null;
+  });
+  const [enrollment, engine] = await Promise.all([enrollmentReady, engineReady]);
+  if (!enrollment) return { error: 'not enrolled (no face/wearer.json)' };
+  if (!engine) return { error: 'face engine failed' };
+  return { enrollment, engine };
 }
 const suitReady = Suit.load(profile, (loaded, total) => {
   suitLoaded = loaded;

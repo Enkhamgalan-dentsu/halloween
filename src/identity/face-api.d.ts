@@ -4,8 +4,15 @@
  * package's API is identical for these members.
  */
 declare module '@vladmandic/face-api' {
+  export type NamedTensorMap = Record<string, unknown>;
+  export interface WeightSpec {
+    name: string;
+    shape: number[];
+    dtype: string;
+  }
   export interface Net {
     loadFromUri(uri: string): Promise<void>;
+    loadFromWeightMap(weightMap: NamedTensorMap): void;
     isLoaded: boolean;
   }
   export const nets: {
@@ -33,6 +40,7 @@ declare module '@vladmandic/face-api' {
   }
   export function detectSingleFace(input: HTMLCanvasElement | HTMLImageElement | HTMLVideoElement, options?: TinyFaceDetectorOptions): SingleFaceTask;
   export const tf: {
+    io: { decodeWeights(buffer: ArrayBuffer, specs: WeightSpec[]): NamedTensorMap };
     setBackend(name: string): Promise<boolean>;
     ready(): Promise<void>;
     getBackend(): string;

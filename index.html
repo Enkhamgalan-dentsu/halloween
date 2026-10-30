@@ -6,6 +6,45 @@
     <meta name="theme-color" content="#04110f" />
     <title>Haunted Suit AR</title>
     <link rel="preload" as="image" href="/loading.jpg" />
+    <script>
+      // Start EVERY big download right now, in parallel, before the app's JS has even
+      // arrived (~16 MB in total, so waiting for the JS first costs seconds on a phone).
+      // The app's own fetch()es then pick up these responses. Keep in sync with:
+      // tracking/mediapipe-pose.ts (wasm + model), rig/profiles.ts (suits),
+      // identity/face-engine.ts (face models), main.ts (wearer.json, suit pick).
+      (function () {
+        var q = new URLSearchParams(location.search);
+        var add = function (href, as) {
+          var l = document.createElement('link');
+          l.rel = 'preload';
+          l.as = as;
+          l.href = href;
+          l.crossOrigin = 'anonymous';
+          document.head.appendChild(l);
+        };
+        // Same SIMD probe as MediaPipe, so we fetch the wasm build it will ask for.
+        var simd = false;
+        try {
+          simd = WebAssembly.validate(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0, 1, 5, 1, 96, 0, 1, 123, 3, 2, 1, 0, 10, 10, 1, 8, 0, 65, 0, 253, 15, 253, 98, 11]));
+        } catch (e) {}
+        var wasm = '/mediapipe/wasm/vision_wasm' + (simd ? '' : '_nosimd') + '_internal';
+        add(wasm + '.wasm', 'fetch');
+        add(wasm + '.js', 'script');
+        add('/models/pose_landmarker_' + (q.get('model') === 'full' ? 'full' : 'lite') + '.task', 'fetch');
+        // The costume is picked here (50/50, or ?suit=) so its download starts now too.
+        var suits = ['mermaid', 'bonnie'];
+        var suit = suits.indexOf(q.get('suit')) >= 0 ? q.get('suit') : suits[Math.random() < 0.5 ? 0 : 1];
+        document.documentElement.setAttribute('data-suit', suit);
+        add('/suits/' + suit + '.glb', 'fetch');
+        if (q.get('lock') !== '0') {
+          add('/face/wearer.json', 'fetch');
+          ['tiny_face_detector_model', 'face_landmark_68_tiny_model', 'face_recognition_model'].forEach(function (n) {
+            add('/models/face/' + n + '-weights_manifest.json', 'fetch');
+            add('/models/face/' + n + '.bin', 'fetch');
+          });
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="stage">

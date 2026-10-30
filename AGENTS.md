@@ -138,6 +138,14 @@ netlify.toml          SPA rewrites for /F and /B, cache headers (vercel.json mir
 - No per‑frame allocations in hot paths (reuse `Vector3`/`Quaternion` scratch objects).
 - three.js `q.slerpQuaternions(a, b, t)` copies `a` into `q` first — never pass `q` as `b`.
 - Never block the UI on asset loading without a visible progress/status message.
+- Every big download is started by the inline preloader in `index.html` (wasm + loader
+  script, pose model, the randomly picked suit, face weights, wearer.json) and picked up by
+  the app's own `fetch()`es. If you rename/move any of those files, update it too — a
+  mismatched preload means a double download. Keep app fetches plain `fetch(url)` (no
+  `cache:`/headers options) so they match the preloads.
+- Face nets are warmed up with the WHOLE pipeline (noise image, near-zero threshold) behind
+  the loader; a blank-image warm-up leaves landmarks + recognition cold (seconds of shader
+  compile on the first real check).
 - The printed QR payload is exactly `https://halloween-ruby.vercel.app` (`assets/qr/`).
   The old `/F`, `/B` paths still load the app (vercel.json rewrites) — keep them working.
 - Face checks run on a ~160 px head crop, one person at a time, async (never block the
