@@ -16,11 +16,11 @@ import type { QrHit } from './finder.ts';
 
 /**
  * Exact payloads printed in the QR codes. All uppercase → QR alphanumeric mode →
- * version 3 at error correction H. Must match the paths handled in config.ts and netlify.toml.
+ * version 3 at error correction H. Must match the paths handled in config.ts and vercel.json.
  */
 export const MARKER_URLS = {
-  front: 'HTTPS://BOO.ANGAAHAI.COM/F',
-  back: 'HTTPS://BOO.ANGAAHAI.COM/B',
+  front: 'HTTPS://HALLOWEEN-RUBY.VERCEL.APP/F',
+  back: 'HTTPS://HALLOWEEN-RUBY.VERCEL.APP/B',
 } as const;
 
 /** Largest crop side for marker search (px). Bigger = finds smaller/farther codes, slower. */

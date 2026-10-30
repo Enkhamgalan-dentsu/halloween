@@ -17,7 +17,7 @@
     "typecheck": "tsc --noEmit",
     "test": "node --experimental-strip-types --no-warnings --test \"tests/*.test.ts\""
   },
-  "homepage": "https://boo.angaahai.com",
+  "homepage": "https://halloween-ruby.vercel.app",
   "dependencies": {
     "@mediapipe/tasks-vision": "^1.1.1",
     "three": "^0.186.1"

@@ -10,8 +10,8 @@ their phone camera → the URL opens this web app → the app uses the **rear ca
 tracks the wearer's body, and renders a **rigged 3D Halloween suit** over them that
 follows their movement in real time.
 
-Fixed context: **indoor** party, **full‑body** suit, production URL **https://boo.angaahai.com**
-(Netlify, subdomain of the owner's domain). There are **two costumes**, picked at random
+Fixed context: **indoor** party, **full‑body** suit, production URL **https://halloween-ruby.vercel.app**
+(Vercel project `halloween-ruby`; the printed QR markers point here, so the project name must never change). There are **two costumes**, picked at random
 (50/50) on every load, `?suit=mermaid|bonnie` to force one:
 - **Creepy Mermaid** (`public/suits/mermaid.glb`, seenoise, CC BY 4.0) — rigged by us,
   identity rest rotations, **tail instead of legs** (the wearer's legs drive the tail).
@@ -36,7 +36,7 @@ robust over clever. A stable, slightly‑less‑fancy suit beats a jittery fancy
 | Body tracking | MediaPipe Tasks Vision — `PoseLandmarker` (33 landmarks, image + world) |
 | Suit asset | `tools/build-suit/` → `public/suits/mermaid.glb` (Mixamo-named humanoid bones + tail chain) |
 | Marker | Standard QR code (opens URL; also detected in‑frame for front/back) |
-| Hosting | Netlify, `boo.angaahai.com` (CNAME), config in `netlify.toml` (`vercel.json` kept as fallback) |
+| Hosting | Vercel, `halloween-ruby.vercel.app`, config in `vercel.json` (`netlify.toml` kept as a mirror) |
 
 No backend. No accounts. No analytics. No third‑party CDNs at runtime — the wasm and
 models are self‑hosted from `public/`.
@@ -131,8 +131,8 @@ netlify.toml          SPA rewrites for /F and /B, cache headers (vercel.json mir
 - No per‑frame allocations in hot paths (reuse `Vector3`/`Quaternion` scratch objects).
 - three.js `q.slerpQuaternions(a, b, t)` copies `a` into `q` first — never pass `q` as `b`.
 - Never block the UI on asset loading without a visible progress/status message.
-- The printed QR payloads are exactly `HTTPS://BOO.ANGAAHAI.COM/F` (chest) and
-  `HTTPS://BOO.ANGAAHAI.COM/B` (back) — uppercase so they encode in QR alphanumeric mode.
+- The printed QR payloads are exactly `HTTPS://HALLOWEEN-RUBY.VERCEL.APP/F` (chest) and
+  `HTTPS://HALLOWEEN-RUBY.VERCEL.APP/B` (back) — uppercase so they encode in QR alphanumeric mode.
   `/F`, `/B` must keep working forever (config.ts + netlify.toml). Changing them after
   printing breaks the costume.
 - Commit messages: imperative, scoped, e.g. `rig: solve forearm twist from wrist landmarks`.
